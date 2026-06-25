@@ -10,10 +10,16 @@ const tempDir = mkdtempSync(join(tmpdir(), "omo-memory-cli-"));
 const dbPath = join(tempDir, "state.sqlite");
 const env = { ...process.env, OMO_MEMORY_DB: dbPath };
 
-function runCli(args) {
-  const result = spawnSync(process.execPath, [join(root, "dist", "cli.js"), ...args], { cwd: root, env, encoding: "utf8" });
+function runCli(args, cwd = root) {
+  const result = spawnSync(process.execPath, [join(root, "dist", "cli.js"), ...args], { cwd, env, encoding: "utf8" });
   if (result.error) throw result.error;
   return result;
+}
+
+function runGit(args, cwd) {
+  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`git ${args.join(" ")} exited ${result.status ?? "null"}: ${result.stderr.trim()}`);
 }
 
 function requireOk(label, result) {
@@ -35,6 +41,14 @@ try {
   const doctor = requireOk("doctor", runCli(["doctor"]));
   if (doctor.paths?.dbPath !== dbPath || doctor.schemaVersion !== 1 || doctor.project?.id === undefined) throw new Error("doctor returned unexpected report");
   pass("doctor");
+
+  const tokenRemoteRepo = mkdtempSync(join(tempDir, "token-remote-"));
+  runGit(["init"], tokenRemoteRepo);
+  runGit(["remote", "add", "origin", "https://github_pat_SECRET1234567890@github.com/islee23520/private.git"], tokenRemoteRepo);
+  const tokenRemoteDoctor = requireOk("doctor token remote redaction", runCli(["doctor"], tokenRemoteRepo));
+  const tokenRemoteJson = JSON.stringify(tokenRemoteDoctor);
+  if (tokenRemoteJson.includes("github_pat_SECRET1234567890") || !tokenRemoteJson.includes("[REDACTED]")) throw new Error("doctor leaked token-bearing git remote");
+  pass("doctor token remote redaction");
 
   const session = requireOk("session start", runCli(["session", "start", "--host", "codex", "--adapter", "smoke-cli"]));
   if (typeof session.sessionId !== "string" || session.sessionId.length === 0) throw new Error("session start did not return sessionId");
@@ -63,6 +77,10 @@ try {
   const after = requireOk("recent after purge", runCli(["recent"]));
   if (!Array.isArray(after.events) || after.events.length !== 0) throw new Error("recent after purge was not empty");
   pass("recent after purge");
+
+  const afterDoctor = requireOk("doctor after recent", runCli(["doctor"]));
+  if (afterDoctor.counts?.projects !== 0) throw new Error("recent recreated a project row after purge");
+  pass("recent read only");
 } finally {
   rmSync(tempDir, { recursive: true, force: true });
   pass("cleanup");

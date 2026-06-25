@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
-import { doctorReport, exportMemory, initMemory, purgeMemory, recentEvents, recordEvent, startSession, type HostName, writeHandoff } from "./memory.js";
+import { doctorReport, exportMemory, initMemory, purgeMemory, recentEvents, recordEvent, startSession, writeHandoff } from "./memory.js";
 import { runMcpServer } from "./mcp.js";
+import type { HostName } from "./types.js";
 
 type CommandResult = {
   readonly ok: boolean;

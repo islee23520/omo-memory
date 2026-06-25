@@ -4,50 +4,8 @@ import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
-
-export type HostName = "codex" | "opencode" | "grok" | "unknown";
-
-export type ProjectContext = { readonly id: string; readonly repoRoot: string; readonly gitRemote: string | null; readonly gitBranch: string | null; readonly gitHead: string | null };
-
-export type SessionStartInput = { readonly host: HostName; readonly adapter: string };
-
-export type EventRecordInput = { readonly type: string; readonly summary: string; readonly payloadJson?: string; readonly sessionId?: string };
-
-export type MemoryPaths = { readonly dbPath: string };
-
-export type DoctorReport = {
-  readonly paths: MemoryPaths;
-  readonly schemaVersion: number;
-  readonly project: ProjectContext;
-  readonly counts: {
-    readonly projects: number;
-    readonly sessions: number;
-    readonly events: number;
-    readonly handoffs: number;
-  };
-};
-
-export type MemoryExport = {
-  readonly schemaVersion: number;
-  readonly exportedAt: string;
-  readonly paths: MemoryPaths;
-  readonly project: ProjectContext;
-  readonly sessions: readonly SessionExportRow[];
-  readonly events: readonly EventExportRow[];
-  readonly handoffs: readonly HandoffExportRow[];
-};
-
-export type PurgeMemoryInput = { readonly yes: boolean };
-
-export type PurgeMemoryResult = {
-  readonly project: ProjectContext;
-  readonly deleted: DeleteCounts;
-};
-
-type SessionExportRow = { readonly id: string; readonly host: string; readonly adapter: string; readonly startedAt: string; readonly endedAt: string | null; readonly gitBranch: string | null; readonly gitHead: string | null };
-type EventExportRow = { readonly id: string; readonly sessionId: string | null; readonly type: string; readonly summary: string; readonly payloadJson: string | null; readonly createdAt: string };
-type HandoffExportRow = { readonly id: string; readonly sessionId: string | null; readonly summaryMd: string; readonly createdAt: string };
-type DeleteCounts = { readonly events: number; readonly handoffs: number; readonly sessions: number; readonly projects: number };
+import { redactSecrets, sanitizeGitRemote } from "./privacy.js";
+import type { DoctorReport, EventExportRow, EventRecordInput, HandoffExportRow, MemoryExport, MemoryPaths, ProjectContext, PurgeMemoryInput, PurgeMemoryResult, RecentEvent, SessionExportRow, SessionStartInput } from "./types.js";
 
 export class PurgeConfirmationError extends Error {
   constructor() {
@@ -57,14 +15,6 @@ export class PurgeConfirmationError extends Error {
 }
 
 const SCHEMA_VERSION = 1;
-const SECRET_PATTERNS = [
-  /\bBearer\s+[A-Za-z0-9._-]+/gi,
-  /\bgithub_pat_[A-Za-z0-9_]+/g,
-  /\bAKIA[0-9A-Z]{16}\b/g,
-  /\bxox[baprs]-[A-Za-z0-9-]+/g,
-  /\b(?:sk-|pk-)[A-Za-z0-9_-]{12,}\b/g,
-  /\b(password|passwd|secret|token|api[_-]?key|auth)(["']?\s*[:=]\s*["']?)[A-Za-z0-9_\-./+=]{8,}/gi,
-] as const;
 
 export function defaultDbPath(): string {
   return process.env["OMO_MEMORY_DB"] ?? join(homedir(), ".omo", "memory", "state.sqlite");
@@ -72,15 +22,6 @@ export function defaultDbPath(): string {
 
 export function memoryPaths(): MemoryPaths {
   return { dbPath: defaultDbPath() };
-}
-
-export function redactSecrets(input: string): string {
-  return SECRET_PATTERNS.reduce((value, pattern) => {
-    if (pattern.source.startsWith("\\b(password")) {
-      return value.replace(pattern, "$1$2[REDACTED]");
-    }
-    return value.replace(pattern, "[REDACTED]");
-  }, input);
 }
 
 export function openMemoryDb(dbPath = defaultDbPath()): Database.Database {
@@ -177,7 +118,7 @@ export function doctorReport(dbPath = defaultDbPath()): DoctorReport {
 
 export function resolveProjectContext(cwd = process.cwd()): ProjectContext {
   const repoRoot = gitValue(["rev-parse", "--show-toplevel"], cwd) ?? resolve(cwd);
-  const gitRemote = gitValue(["config", "--get", "remote.origin.url"], repoRoot);
+  const gitRemote = sanitizeGitRemote(gitValue(["config", "--get", "remote.origin.url"], repoRoot));
   const gitBranch = gitValue(["rev-parse", "--abbrev-ref", "HEAD"], repoRoot);
   const gitHead = gitValue(["rev-parse", "HEAD"], repoRoot);
   const id = createHash("sha256").update(`${gitRemote ?? ""}\n${repoRoot}`).digest("hex").slice(0, 24);
@@ -230,14 +171,11 @@ export function recordEvent(input: EventRecordInput, dbPath = defaultDbPath()): 
   }
 }
 
-export type RecentEvent = { readonly id: string; readonly type: string; readonly summary: string; readonly createdAt: string; readonly sessionId: string | null };
-
 export function recentEvents(limit: number, dbPath = defaultDbPath()): readonly RecentEvent[] {
   const db = openMemoryDb(dbPath);
   try {
     migrate(db);
     const project = resolveProjectContext();
-    upsertProject(db, project);
     return db.prepare(`
       SELECT id, type, summary, created_at AS createdAt, session_id AS sessionId
       FROM events
