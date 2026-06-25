@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { initMemory, memoryPaths, recentEvents, recordEvent, resolveProjectContext, startSession, writeHandoff } from "./memory.js";
+import { exportMemory, initMemory, memoryPaths, purgeMemory, PurgeConfirmationError, recentEvents, recordEvent, resolveProjectContext, startSession, writeHandoff } from "./memory.js";
 
 export async function runMcpServer(): Promise<void> {
   const server = new McpServer({ name: "omo-memory", version: "0.1.0" });
@@ -24,6 +24,37 @@ export async function runMcpServer(): Promise<void> {
       inputSchema: {},
     },
     async () => jsonResult({ paths: memoryPaths(), project: resolveProjectContext() }),
+  );
+
+  server.registerTool(
+    "memory_export",
+    {
+      title: "Export OMO Memory",
+      description: "Export the current project's OMO memory sessions, events, and handoffs.",
+      inputSchema: {},
+    },
+    async () => jsonResult(exportMemory()),
+  );
+
+  server.registerTool(
+    "memory_purge",
+    {
+      title: "Purge OMO Memory",
+      description: "Delete the current project's OMO memory sessions, events, handoffs, and project row.",
+      inputSchema: {
+        confirm: z.boolean(),
+      },
+    },
+    async ({ confirm }) => {
+      try {
+        return jsonResult(purgeMemory({ yes: confirm }));
+      } catch (error: unknown) {
+        if (error instanceof PurgeConfirmationError) {
+          return jsonResult({ ok: false, error: "memory_purge requires confirm: true" });
+        }
+        throw error;
+      }
+    },
   );
 
   server.registerTool(

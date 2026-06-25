@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
-import { initMemory, memoryPaths, recentEvents, recordEvent, resolveProjectContext, startSession, type HostName, writeHandoff } from "./memory.js";
+import { doctorReport, exportMemory, initMemory, purgeMemory, recentEvents, recordEvent, startSession, type HostName, writeHandoff } from "./memory.js";
 import { runMcpServer } from "./mcp.js";
 
 type CommandResult = {
@@ -30,7 +30,16 @@ function runCommand(command: string, subcommand: string | undefined, rest: reado
   }
 
   if (command === "doctor") {
-    return { ok: true, paths: memoryPaths(), project: resolveProjectContext() };
+    return { ok: true, ...doctorReport() };
+  }
+
+  if (command === "export") {
+    return { ok: true, ...exportMemory() };
+  }
+
+  if (command === "purge") {
+    const args = [subcommand, ...rest].filter((value): value is string => value !== undefined);
+    return { ok: true, ...purgeMemory({ yes: args.includes("--yes") }) };
   }
 
   if (command === "session" && subcommand === "start") {
@@ -83,7 +92,7 @@ function fail(message: string): never {
 }
 
 function printHelp(): void {
-  process.stdout.write(`OMO Memory\n\nCommands:\n  omo-memory init\n  omo-memory doctor\n  omo-memory session start --host <codex|opencode|grok|unknown> --adapter <name>\n  omo-memory event record --type <type> --summary <text> [--session-id <id>]\n  omo-memory recent [--limit <n>]\n  omo-memory handoff write (--summary <text> | --summary-file <path>) [--session-id <id>]\n  omo-memory mcp\n`);
+  process.stdout.write(`OMO Memory\n\nCommands:\n  omo-memory init\n  omo-memory doctor\n  omo-memory export\n  omo-memory purge --yes\n  omo-memory session start --host <codex|opencode|grok|unknown> --adapter <name>\n  omo-memory event record --type <type> --summary <text> [--session-id <id>]\n  omo-memory recent [--limit <n>]\n  omo-memory handoff write (--summary <text> | --summary-file <path>) [--session-id <id>]\n  omo-memory mcp\n`);
 }
 
 main(process.argv.slice(2)).catch((error: unknown) => {

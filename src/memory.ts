@@ -7,31 +7,64 @@ import { execFileSync } from "node:child_process";
 
 export type HostName = "codex" | "opencode" | "grok" | "unknown";
 
-export type ProjectContext = {
-  readonly id: string;
-  readonly repoRoot: string;
-  readonly gitRemote: string | null;
-  readonly gitBranch: string | null;
-  readonly gitHead: string | null;
+export type ProjectContext = { readonly id: string; readonly repoRoot: string; readonly gitRemote: string | null; readonly gitBranch: string | null; readonly gitHead: string | null };
+
+export type SessionStartInput = { readonly host: HostName; readonly adapter: string };
+
+export type EventRecordInput = { readonly type: string; readonly summary: string; readonly payloadJson?: string; readonly sessionId?: string };
+
+export type MemoryPaths = { readonly dbPath: string };
+
+export type DoctorReport = {
+  readonly paths: MemoryPaths;
+  readonly schemaVersion: number;
+  readonly project: ProjectContext;
+  readonly counts: {
+    readonly projects: number;
+    readonly sessions: number;
+    readonly events: number;
+    readonly handoffs: number;
+  };
 };
 
-export type SessionStartInput = {
-  readonly host: HostName;
-  readonly adapter: string;
+export type MemoryExport = {
+  readonly schemaVersion: number;
+  readonly exportedAt: string;
+  readonly paths: MemoryPaths;
+  readonly project: ProjectContext;
+  readonly sessions: readonly SessionExportRow[];
+  readonly events: readonly EventExportRow[];
+  readonly handoffs: readonly HandoffExportRow[];
 };
 
-export type EventRecordInput = {
-  readonly type: string;
-  readonly summary: string;
-  readonly payloadJson?: string;
-  readonly sessionId?: string;
+export type PurgeMemoryInput = { readonly yes: boolean };
+
+export type PurgeMemoryResult = {
+  readonly project: ProjectContext;
+  readonly deleted: DeleteCounts;
 };
 
-export type MemoryPaths = {
-  readonly dbPath: string;
-};
+type SessionExportRow = { readonly id: string; readonly host: string; readonly adapter: string; readonly startedAt: string; readonly endedAt: string | null; readonly gitBranch: string | null; readonly gitHead: string | null };
+type EventExportRow = { readonly id: string; readonly sessionId: string | null; readonly type: string; readonly summary: string; readonly payloadJson: string | null; readonly createdAt: string };
+type HandoffExportRow = { readonly id: string; readonly sessionId: string | null; readonly summaryMd: string; readonly createdAt: string };
+type DeleteCounts = { readonly events: number; readonly handoffs: number; readonly sessions: number; readonly projects: number };
+
+export class PurgeConfirmationError extends Error {
+  constructor() {
+    super("purge requires --yes");
+    this.name = "PurgeConfirmationError";
+  }
+}
 
 const SCHEMA_VERSION = 1;
+const SECRET_PATTERNS = [
+  /\bBearer\s+[A-Za-z0-9._-]+/gi,
+  /\bgithub_pat_[A-Za-z0-9_]+/g,
+  /\bAKIA[0-9A-Z]{16}\b/g,
+  /\bxox[baprs]-[A-Za-z0-9-]+/g,
+  /\b(?:sk-|pk-)[A-Za-z0-9_-]{12,}\b/g,
+  /\b(password|passwd|secret|token|api[_-]?key|auth)(["']?\s*[:=]\s*["']?)[A-Za-z0-9_\-./+=]{8,}/gi,
+] as const;
 
 export function defaultDbPath(): string {
   return process.env["OMO_MEMORY_DB"] ?? join(homedir(), ".omo", "memory", "state.sqlite");
@@ -39,6 +72,15 @@ export function defaultDbPath(): string {
 
 export function memoryPaths(): MemoryPaths {
   return { dbPath: defaultDbPath() };
+}
+
+export function redactSecrets(input: string): string {
+  return SECRET_PATTERNS.reduce((value, pattern) => {
+    if (pattern.source.startsWith("\\b(password")) {
+      return value.replace(pattern, "$1$2[REDACTED]");
+    }
+    return value.replace(pattern, "[REDACTED]");
+  }, input);
 }
 
 export function openMemoryDb(dbPath = defaultDbPath()): Database.Database {
@@ -110,6 +152,29 @@ export function initMemory(dbPath = defaultDbPath()): { readonly dbPath: string;
   }
 }
 
+export function doctorReport(dbPath = defaultDbPath()): DoctorReport {
+  const db = openMemoryDb(dbPath);
+  try {
+    migrate(db);
+    const project = resolveProjectContext();
+    const schemaVersion = Number(db.prepare("SELECT value FROM schema_meta WHERE key = 'schema_version'").pluck().get());
+    const count = (table: string): number => Number(db.prepare(`SELECT COUNT(*) FROM ${table}`).pluck().get());
+    return {
+      paths: { dbPath },
+      schemaVersion,
+      project,
+      counts: {
+        projects: count("projects"),
+        sessions: count("sessions"),
+        events: count("events"),
+        handoffs: count("handoffs"),
+      },
+    };
+  } finally {
+    db.close();
+  }
+}
+
 export function resolveProjectContext(cwd = process.cwd()): ProjectContext {
   const repoRoot = gitValue(["rev-parse", "--show-toplevel"], cwd) ?? resolve(cwd);
   const gitRemote = gitValue(["config", "--get", "remote.origin.url"], repoRoot);
@@ -158,20 +223,14 @@ export function recordEvent(input: EventRecordInput, dbPath = defaultDbPath()): 
     db.prepare(`
       INSERT INTO events (id, session_id, project_id, type, summary, payload_json, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(eventId, input.sessionId ?? null, project.id, input.type, input.summary, input.payloadJson ?? null, new Date().toISOString());
+    `).run(eventId, input.sessionId ?? null, project.id, input.type, redactSecrets(input.summary), input.payloadJson === undefined ? null : redactSecrets(input.payloadJson), new Date().toISOString());
     return { eventId, project };
   } finally {
     db.close();
   }
 }
 
-export type RecentEvent = {
-  readonly id: string;
-  readonly type: string;
-  readonly summary: string;
-  readonly createdAt: string;
-  readonly sessionId: string | null;
-};
+export type RecentEvent = { readonly id: string; readonly type: string; readonly summary: string; readonly createdAt: string; readonly sessionId: string | null };
 
 export function recentEvents(limit: number, dbPath = defaultDbPath()): readonly RecentEvent[] {
   const db = openMemoryDb(dbPath);
@@ -201,8 +260,59 @@ export function writeHandoff(summaryMd: string, sessionId?: string, dbPath = def
     db.prepare(`
       INSERT INTO handoffs (id, project_id, session_id, summary_md, created_at)
       VALUES (?, ?, ?, ?, ?)
-    `).run(handoffId, project.id, sessionId ?? null, summaryMd, new Date().toISOString());
+    `).run(handoffId, project.id, sessionId ?? null, redactSecrets(summaryMd), new Date().toISOString());
     return { handoffId, project };
+  } finally {
+    db.close();
+  }
+}
+
+export function exportMemory(dbPath = defaultDbPath()): MemoryExport {
+  const db = openMemoryDb(dbPath);
+  try {
+    migrate(db);
+    const project = resolveProjectContext();
+    const sessions = db.prepare(`
+      SELECT id, host, adapter, started_at AS startedAt, ended_at AS endedAt, git_branch AS gitBranch, git_head AS gitHead FROM sessions
+      WHERE project_id = ? ORDER BY started_at ASC, id ASC
+    `).all(project.id) as SessionExportRow[];
+    const events = db.prepare(`
+      SELECT id, session_id AS sessionId, type, summary, payload_json AS payloadJson, created_at AS createdAt FROM events
+      WHERE project_id = ? ORDER BY created_at ASC, id ASC
+    `).all(project.id) as EventExportRow[];
+    const handoffs = db.prepare(`
+      SELECT id, session_id AS sessionId, summary_md AS summaryMd, created_at AS createdAt FROM handoffs
+      WHERE project_id = ? ORDER BY created_at ASC, id ASC
+    `).all(project.id) as HandoffExportRow[];
+    return {
+      schemaVersion: SCHEMA_VERSION,
+      exportedAt: new Date().toISOString(),
+      paths: { dbPath },
+      project,
+      sessions,
+      events,
+      handoffs,
+    };
+  } finally {
+    db.close();
+  }
+}
+
+export function purgeMemory(input: PurgeMemoryInput, dbPath = defaultDbPath()): PurgeMemoryResult {
+  if (!input.yes) throw new PurgeConfirmationError();
+
+  const db = openMemoryDb(dbPath);
+  try {
+    migrate(db);
+    const project = resolveProjectContext();
+    const deleteProject = db.transaction(() => {
+      const events = db.prepare("DELETE FROM events WHERE project_id = ?").run(project.id).changes;
+      const handoffs = db.prepare("DELETE FROM handoffs WHERE project_id = ?").run(project.id).changes;
+      const sessions = db.prepare("DELETE FROM sessions WHERE project_id = ?").run(project.id).changes;
+      const projects = db.prepare("DELETE FROM projects WHERE id = ?").run(project.id).changes;
+      return { events, handoffs, sessions, projects };
+    });
+    return { project, deleted: deleteProject() };
   } finally {
     db.close();
   }

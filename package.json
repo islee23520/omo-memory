@@ -11,6 +11,9 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit",
     "start": "node dist/cli.js",
+    "smoke": "npm run smoke:cli && npm run smoke:mcp",
+    "smoke:cli": "node scripts/smoke-cli.mjs",
+    "smoke:mcp": "node scripts/smoke-mcp.mjs",
     "mcp": "node dist/cli.js mcp",
     "issue:epic": "node scripts/create-epic-issue.mjs"
   },
