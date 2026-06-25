@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import Database from "better-sqlite3";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const tempDir = mkdtempSync(join(tmpdir(), "omo-memory-cli-"));
@@ -49,6 +51,26 @@ try {
   const tokenRemoteJson = JSON.stringify(tokenRemoteDoctor);
   if (tokenRemoteJson.includes("github_pat_SECRET1234567890") || !tokenRemoteJson.includes("[REDACTED]")) throw new Error("doctor leaked token-bearing git remote");
   pass("doctor token remote redaction");
+
+  const rawRemote = "https://github_pat_SECRET1234567890@github.com/islee23520/private.git";
+  const db = new Database(dbPath);
+  try {
+    const now = new Date().toISOString();
+    db.prepare("INSERT INTO projects (id, repo_root, git_remote, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)").run(tokenRemoteDoctor.project.id, tokenRemoteRepo, rawRemote, now, now);
+    db.prepare("INSERT INTO events (id, project_id, type, summary, created_at) VALUES (?, ?, ?, ?, ?)").run(randomUUID(), tokenRemoteDoctor.project.id, "legacy.raw_remote", "legacy event", now);
+  } finally {
+    db.close();
+  }
+  const legacyPurge = requireOk("legacy raw remote purge", runCli(["purge", "--yes"], tokenRemoteRepo));
+  if (legacyPurge.deleted?.events < 1 || legacyPurge.deleted?.projects < 1) throw new Error("purge missed legacy raw remote rows");
+  const legacyAfter = new Database(dbPath, { readonly: true });
+  try {
+    const rawRows = legacyAfter.prepare("SELECT COUNT(*) FROM projects WHERE git_remote = ?").pluck().get(rawRemote);
+    if (rawRows !== 0) throw new Error("legacy raw remote row remained after purge");
+  } finally {
+    legacyAfter.close();
+  }
+  pass("legacy raw remote purge");
 
   const session = requireOk("session start", runCli(["session", "start", "--host", "codex", "--adapter", "smoke-cli"]));
   if (typeof session.sessionId !== "string" || session.sessionId.length === 0) throw new Error("session start did not return sessionId");

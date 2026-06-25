@@ -118,10 +118,11 @@ export function doctorReport(dbPath = defaultDbPath()): DoctorReport {
 
 export function resolveProjectContext(cwd = process.cwd()): ProjectContext {
   const repoRoot = gitValue(["rev-parse", "--show-toplevel"], cwd) ?? resolve(cwd);
-  const gitRemote = sanitizeGitRemote(gitValue(["config", "--get", "remote.origin.url"], repoRoot));
+  const rawGitRemote = gitValue(["config", "--get", "remote.origin.url"], repoRoot);
+  const gitRemote = sanitizeGitRemote(rawGitRemote);
   const gitBranch = gitValue(["rev-parse", "--abbrev-ref", "HEAD"], repoRoot);
   const gitHead = gitValue(["rev-parse", "HEAD"], repoRoot);
-  const id = createHash("sha256").update(`${gitRemote ?? ""}\n${repoRoot}`).digest("hex").slice(0, 24);
+  const id = createHash("sha256").update(`${rawGitRemote ?? ""}\n${repoRoot}`).digest("hex").slice(0, 24);
   return { id, repoRoot, gitRemote, gitBranch, gitHead };
 }
 
@@ -244,10 +245,10 @@ export function purgeMemory(input: PurgeMemoryInput, dbPath = defaultDbPath()): 
     migrate(db);
     const project = resolveProjectContext();
     const deleteProject = db.transaction(() => {
-      const events = db.prepare("DELETE FROM events WHERE project_id = ?").run(project.id).changes;
-      const handoffs = db.prepare("DELETE FROM handoffs WHERE project_id = ?").run(project.id).changes;
-      const sessions = db.prepare("DELETE FROM sessions WHERE project_id = ?").run(project.id).changes;
-      const projects = db.prepare("DELETE FROM projects WHERE id = ?").run(project.id).changes;
+      const events = db.prepare("DELETE FROM events WHERE project_id IN (SELECT id FROM projects WHERE id = ? OR repo_root = ?)").run(project.id, project.repoRoot).changes;
+      const handoffs = db.prepare("DELETE FROM handoffs WHERE project_id IN (SELECT id FROM projects WHERE id = ? OR repo_root = ?)").run(project.id, project.repoRoot).changes;
+      const sessions = db.prepare("DELETE FROM sessions WHERE project_id IN (SELECT id FROM projects WHERE id = ? OR repo_root = ?)").run(project.id, project.repoRoot).changes;
+      const projects = db.prepare("DELETE FROM projects WHERE id = ? OR repo_root = ?").run(project.id, project.repoRoot).changes;
       return { events, handoffs, sessions, projects };
     });
     return { project, deleted: deleteProject() };
