@@ -1,0 +1,30 @@
+{
+  "name": "omo-memory",
+  "version": "0.1.0",
+  "description": "Host-neutral local SQLite memory and session ledger for OMO adapters, exposed through CLI and MCP.",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "omo-memory": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/cli.js",
+    "mcp": "node dist/cli.js mcp",
+    "issue:epic": "node scripts/create-epic-issue.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "better-sqlite3": "^12.11.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.10.1",
+    "typescript": "^6.0.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
