@@ -149,6 +149,9 @@ try {
     throw new Error("hooks install missed expected files");
   }
   if (!readFileSync(codexHook, "utf8").includes("SessionStart")) throw new Error("codex hook did not define SessionStart");
+  const codexSkillText = readFileSync(codexSkill, "utf8");
+  if (!codexSkillText.includes('description: "Use OMO Memory for concise local project memory:'))
+    throw new Error("codex skill frontmatter description was not YAML-quoted");
   if (!readFileSync(codexHookScript, "utf8").includes('--host", host')) throw new Error("codex hook script did not reference bootstrap host");
   if (!readFileSync(codexMarketplace, "utf8").includes("omo-memory")) throw new Error("codex marketplace did not include omo-memory");
   if (!readFileSync(codexConfig, "utf8").includes('[plugins."omo-memory@islee23520"]')) throw new Error("codex config did not enable omo-memory plugin");

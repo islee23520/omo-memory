@@ -3,7 +3,7 @@ export const CODEX_PLUGIN = "omo-memory";
 
 export const CODEX_SKILL = `---
 name: omo-memory
-description: Use OMO Memory for concise local project memory: bootstrap recent events, record decisions, QA evidence, blockers, and handoffs without secrets.
+description: "Use OMO Memory for concise local project memory: bootstrap recent events, record decisions, QA evidence, blockers, and handoffs without secrets."
 ---
 
 # OMO Memory
@@ -82,7 +82,7 @@ export const GROK_HOOK_SCRIPT = SESSION_BOOTSTRAP_SCRIPT.replace('?? "codex"', '
 
 export const GROK_PLUGIN_JSON = `{
   "name": "omo-memory",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Project-local OMO Memory bootstrap hook and MCP server for Grok.",
   "author": {
     "name": "islee23520"
@@ -109,7 +109,7 @@ export const GROK_MCP_JSON = `{
 
 export const CODEX_PLUGIN_JSON = `{
   "name": "omo-memory",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Session-start OMO Memory bootstrap hook for Codex.",
   "author": "islee23520",
   "homepage": "https://github.com/islee23520/omo-memory",
