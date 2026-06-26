@@ -28,7 +28,6 @@ After npm publish, adapters and users can invoke the packaged CLI directly:
 
 ```sh
 npx -y omo-memory init
-npx -y omo-memory hooks install --host all
 npx -y omo-memory session bootstrap --host codex --adapter lazycodex --limit 5
 npx -y omo-memory session start --host codex --adapter lazycodex
 npx -y omo-memory session start --host grok --adapter lfg
@@ -83,22 +82,6 @@ grok mcp add omo-memory -- npx -y omo-memory mcp
 ```
 
 Register the same MCP server in every host that needs memory access. Do not create separate Codex/Grok schemas or databases; host identity belongs in `memory_start_session` metadata.
-
-## Plugin-Style Host Install
-
-Install host-side passive behavior with:
-
-```sh
-npx -y omo-memory hooks install --host all
-```
-
-Supported `--host` values:
-
-- `codex`: installs `~/.codex/skills/omo-memory/SKILL.md`, an idempotent OMO Memory block in `~/.codex/AGENTS.md`, and a local Codex plugin with a `SessionStart` hook.
-- `grok`: installs `~/.grok/plugins/omo-memory` with `plugin.json`, a bundled skill, `hooks/hooks.json`, `.mcp.json`, and a SessionStart script. It also writes compatibility copies to `~/.grok/skills` and `~/.grok/hooks`.
-- `all`: installs both.
-
-The installer is idempotent and replaces only the marked `omo-memory` block in AGENTS files. For Codex it also registers the local plugin with `codex plugin add omo-memory@islee23520 --json` when installing into the real home directory. For Grok, `~/.grok/plugins/omo-memory` is a user plugin and is trusted automatically by Grok.
 
 ## Session Bootstrap Flow
 

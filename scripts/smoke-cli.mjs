@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { mkdtempSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,9 +10,8 @@ import Database from "better-sqlite3";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const tempDir = mkdtempSync(join(tmpdir(), "omo-memory-cli-"));
 const dbPath = join(tempDir, "state.sqlite");
-const installHome = join(tempDir, "home");
-const env = { ...process.env, OMO_MEMORY_DB: dbPath, OMO_MEMORY_INSTALL_HOME: installHome };
-const envProjectDefault = { ...process.env, OMO_MEMORY_INSTALL_HOME: installHome };
+const env = { ...process.env, OMO_MEMORY_DB: dbPath };
+const envProjectDefault = { ...process.env };
 delete envProjectDefault.OMO_MEMORY_DB;
 
 function runCli(args, cwd = root) {
@@ -121,45 +120,6 @@ try {
   const session = requireOk("session start", runCli(["session", "start", "--host", "codex", "--adapter", "smoke-cli"]));
   if (typeof session.sessionId !== "string" || session.sessionId.length === 0) throw new Error("session start did not return sessionId");
   pass("session start");
-
-  const hooks = requireOk("hooks install", runCli(["hooks", "install", "--host", "all"]));
-  if (!Array.isArray(hooks.installed) || hooks.installed.length !== 2) throw new Error("hooks install did not install both hosts");
-  const codexSkill = join(installHome, ".codex", "skills", "omo-memory", "SKILL.md");
-  const codexPlugin = join(installHome, ".codex", "local-marketplaces", "islee23520", "plugins", "omo-memory", ".codex-plugin", "plugin.json");
-  const codexHook = join(installHome, ".codex", "local-marketplaces", "islee23520", "plugins", "omo-memory", "hooks", "hooks.json");
-  const codexHookScript = join(installHome, ".codex", "local-marketplaces", "islee23520", "plugins", "omo-memory", "scripts", "omo-memory-session.mjs");
-  const codexMarketplace = join(installHome, ".codex", "local-marketplaces", "islee23520", ".agents", "plugins", "marketplace.json");
-  const codexConfig = join(installHome, ".codex", "config.toml");
-  const grokHook = join(installHome, ".grok", "hooks", "omo-memory-hooks.json");
-  const grokPlugin = join(installHome, ".grok", "plugins", "omo-memory", "plugin.json");
-  const grokPluginHook = join(installHome, ".grok", "plugins", "omo-memory", "hooks", "hooks.json");
-  const grokPluginMcp = join(installHome, ".grok", "plugins", "omo-memory", ".mcp.json");
-  if (
-    !existsSync(codexSkill) ||
-    !existsSync(codexPlugin) ||
-    !existsSync(codexHook) ||
-    !existsSync(codexHookScript) ||
-    !existsSync(codexMarketplace) ||
-    !existsSync(codexConfig) ||
-    !existsSync(grokHook) ||
-    !existsSync(grokPlugin) ||
-    !existsSync(grokPluginHook) ||
-    !existsSync(grokPluginMcp)
-  ) {
-    throw new Error("hooks install missed expected files");
-  }
-  if (!readFileSync(codexHook, "utf8").includes("SessionStart")) throw new Error("codex hook did not define SessionStart");
-  const codexSkillText = readFileSync(codexSkill, "utf8");
-  if (!codexSkillText.includes('description: "Use OMO Memory for concise local project memory:'))
-    throw new Error("codex skill frontmatter description was not YAML-quoted");
-  if (!readFileSync(codexHookScript, "utf8").includes('--host", host')) throw new Error("codex hook script did not reference bootstrap host");
-  if (!readFileSync(codexMarketplace, "utf8").includes("omo-memory")) throw new Error("codex marketplace did not include omo-memory");
-  if (!readFileSync(codexConfig, "utf8").includes('[plugins."omo-memory@islee23520"]')) throw new Error("codex config did not enable omo-memory plugin");
-  if (!readFileSync(grokHook, "utf8").includes("omo-memory-session.mjs")) throw new Error("grok hook did not reference session script");
-  if (!readFileSync(grokPlugin, "utf8").includes('"mcpServers": "./.mcp.json"')) throw new Error("grok plugin did not declare MCP config");
-  if (!readFileSync(grokPluginHook, "utf8").includes("SessionStart")) throw new Error("grok plugin did not define SessionStart");
-  if (!readFileSync(grokPluginMcp, "utf8").includes('"omo-memory"')) throw new Error("grok plugin did not bundle omo-memory MCP config");
-  pass("hooks install");
 
   const bootstrap = requireOk("session bootstrap", runCli(["session", "bootstrap", "--host", "codex", "--adapter", "smoke-cli", "--limit", "5"]));
   if (typeof bootstrap.sessionId !== "string" || !Array.isArray(bootstrap.recentEvents)) throw new Error("session bootstrap returned unexpected payload");

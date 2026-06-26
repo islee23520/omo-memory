@@ -1,7 +1,5 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
-import type { HookInstallHost } from "./hooks.js";
-import { installHooks } from "./hooks.js";
 import { runMcpServer } from "./mcp.js";
 import { bootstrapSession, doctorReport, exportMemory, purgeMemory, recentEvents, recordEvent, startSession, writeHandoff } from "./memory.js";
 import { initMemory } from "./memoryDb.js";
@@ -44,10 +42,6 @@ function runCommand(command: string, subcommand: string | undefined, rest: reado
   if (command === "purge") {
     const args = [subcommand, ...rest].filter((value): value is string => value !== undefined);
     return { ok: true, ...purgeMemory({ yes: args.includes("--yes") }) };
-  }
-
-  if (command === "hooks" && subcommand === "install") {
-    return { ok: true, ...installHooks({ host: parseHookInstallHost(readFlag(rest, "--host") ?? "all") }) };
   }
 
   if (command === "session" && subcommand === "start") {
@@ -106,11 +100,6 @@ function parseHost(value: string): HostName {
   fail("--host must be one of codex, opencode, grok, unknown");
 }
 
-function parseHookInstallHost(value: string): HookInstallHost {
-  if (value === "codex" || value === "grok" || value === "all") return value;
-  fail("--host must be one of codex, grok, all");
-}
-
 function readPositiveIntFlag(args: readonly string[], name: string, defaultValue: number): number {
   return parsePositiveInt(readFlag(args, name) ?? String(defaultValue), name);
 }
@@ -127,7 +116,7 @@ function fail(message: string): never {
 
 function printHelp(): void {
   process.stdout.write(
-    `OMO Memory\n\nCommands:\n  omo-memory init\n  omo-memory doctor\n  omo-memory export\n  omo-memory purge --yes\n  omo-memory hooks install --host <codex|grok|all>\n  omo-memory session start --host <codex|opencode|grok|unknown> --adapter <name>\n  omo-memory session bootstrap --host <codex|opencode|grok|unknown> --adapter <name> [--limit <n>]\n  omo-memory event record --type <type> --summary <text> [--session-id <id>]\n  omo-memory recent [--limit <n>]\n  omo-memory handoff write (--summary <text> | --summary-file <path>) [--session-id <id>]\n  omo-memory mcp\n`,
+    `OMO Memory\n\nCommands:\n  omo-memory init\n  omo-memory doctor\n  omo-memory export\n  omo-memory purge --yes\n  omo-memory session start --host <codex|opencode|grok|unknown> --adapter <name>\n  omo-memory session bootstrap --host <codex|opencode|grok|unknown> --adapter <name> [--limit <n>]\n  omo-memory event record --type <type> --summary <text> [--session-id <id>]\n  omo-memory recent [--limit <n>]\n  omo-memory handoff write (--summary <text> | --summary-file <path>) [--session-id <id>]\n  omo-memory mcp\n`,
   );
 }
 
