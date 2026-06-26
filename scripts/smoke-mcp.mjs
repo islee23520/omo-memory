@@ -8,7 +8,17 @@ import { fileURLToPath } from "node:url";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const tempDir = mkdtempSync(join(tmpdir(), "omo-memory-mcp-"));
 const dbPath = join(tempDir, "state.sqlite");
-const expectedTools = ["memory_init", "memory_project_context", "memory_record_event", "memory_recent_events", "memory_write_handoff", "memory_export", "memory_purge"];
+const expectedTools = [
+  "memory_init",
+  "memory_project_context",
+  "memory_start_session",
+  "memory_bootstrap_session",
+  "memory_record_event",
+  "memory_recent_events",
+  "memory_write_handoff",
+  "memory_export",
+  "memory_purge",
+];
 const pending = new Map();
 let nextId = 1;
 let stdoutBuffer = "";
@@ -81,7 +91,11 @@ child.stderr.on("data", (chunk) => {
 });
 
 try {
-  const initialize = await send(child, "initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "omo-memory-smoke", version: "0.1.0" } });
+  const initialize = await send(child, "initialize", {
+    protocolVersion: "2025-06-18",
+    capabilities: {},
+    clientInfo: { name: "omo-memory-smoke", version: "0.1.0" },
+  });
   if (initialize.result?.serverInfo?.name !== "omo-memory") throw new Error("unexpected MCP server name");
   notify(child, "notifications/initialized");
   pass("initialize");
@@ -101,12 +115,18 @@ try {
   if (context.paths?.dbPath !== dbPath || context.project?.id === undefined) throw new Error("memory_project_context returned unexpected context");
   pass("memory_project_context call");
 
+  const bootstrap = parseToolText(await callTool(child, "memory_bootstrap_session", { host: "codex", adapter: "smoke-mcp", limit: 5 }));
+  if (typeof bootstrap.sessionId !== "string" || !Array.isArray(bootstrap.recentEvents))
+    throw new Error("memory_bootstrap_session returned unexpected payload");
+  pass("memory_bootstrap_session call");
+
   const event = parseToolText(await callTool(child, "memory_record_event", { type: "smoke.mcp", summary: "MCP smoke token=sk-test1234567890" }));
   if (typeof event.eventId !== "string") throw new Error("memory_record_event did not return eventId");
   pass("memory_record_event call");
 
   const recent = parseToolText(await callTool(child, "memory_recent_events", { limit: 5 }));
-  if (!Array.isArray(recent.events) || !recent.events.some((item) => item.summary.includes("[REDACTED]"))) throw new Error("memory_recent_events did not include redacted event");
+  if (!Array.isArray(recent.events) || !recent.events.some((item) => item.summary.includes("[REDACTED]")))
+    throw new Error("memory_recent_events did not include redacted event");
   pass("memory_recent_events call");
 
   const handoff = parseToolText(await callTool(child, "memory_write_handoff", { summaryMd: "MCP smoke handoff Bearer abcdef123456" }));

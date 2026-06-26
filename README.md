@@ -9,8 +9,9 @@ It gives lazycodex, omo-on-opencode, lfg, and future OMO adapters a shared local
 
 ## Product shape
 
-- Global local DB: `~/.omo/memory/state.sqlite`
+- Project-local DB: `<project-root>/.omo/memory/state.sqlite`
 - Project namespacing: by git remote + project root hash
+- Move handling: if a project directory moves with its `.omo` ledger, existing rows are migrated to the new root automatically.
 - Privacy default: local-only, no network sync, no secrets by design
 - Intended adapters: Codex/lazycodex, OpenCode/OMO, GrokBuild/lfg
 
@@ -26,15 +27,103 @@ node dist/cli.js recent
 node dist/cli.js mcp
 ```
 
+## Install
+
+After the package is published to npm, use the same package for CLI and MCP:
+
+```sh
+npx -y omo-memory init
+npx -y omo-memory hooks install --host all
+npx -y omo-memory session bootstrap --host codex --adapter lazycodex --limit 5
+npx -y omo-memory recent --limit 5
+npx -y omo-memory mcp
+```
+
+For local development before publish:
+
+```sh
+npm install
+npm run build
+npm link
+omo-memory init
+```
+
+## MCP registration
+
+Register the same MCP server in every host that should read/write the current project's memory DB.
+
+Codex:
+
+```sh
+codex mcp add omo-memory -- npx -y omo-memory mcp
+```
+
+Grok:
+
+```sh
+grok mcp add omo-memory -- npx -y omo-memory mcp
+```
+
+Both hosts use the current project ledger at `<project-root>/.omo/memory/state.sqlite` by default. The `host` value is recorded when an adapter calls `memory_start_session`, not by installing separate servers.
+
+## Passive setup
+
+Install the host plugin-style bundles with:
+
+```sh
+npx -y omo-memory hooks install --host all
+```
+
+This installs:
+
+- Codex: `~/.codex/skills/omo-memory/SKILL.md`, a global `~/.codex/AGENTS.md` lifecycle rule, and a local Codex plugin with a `SessionStart` hook.
+- Grok: `~/.grok/plugins/omo-memory` with `plugin.json`, skill, `SessionStart` hook, and `.mcp.json`, plus compatibility copies in `~/.grok/skills` and `~/.grok/hooks`.
+
+The installer is idempotent. For Codex it also runs `codex plugin add omo-memory@islee23520 --json` when installing into the real home directory.
+
+## Session bootstrap
+
+Adapters should call the bootstrap tool at the beginning of each host session:
+
+```json
+{
+  "tool": "memory_bootstrap_session",
+  "arguments": {
+    "host": "codex",
+    "adapter": "lazycodex",
+    "limit": 5
+  }
+}
+```
+
+The response contains a new `sessionId` plus `recentEvents` for the current project. Reuse that `sessionId` when recording follow-up events:
+
+```json
+{
+  "tool": "memory_record_event",
+  "arguments": {
+    "type": "decision",
+    "summary": "Chose the npm MCP package as the shared local memory surface.",
+    "sessionId": "<sessionId>"
+  }
+}
+```
+
+This is local routing, not transcript scraping. OMO Memory does not automatically read full Codex or Grok transcripts; the host or adapter must call these MCP tools.
+
 ## MCP tools
 
 Initial stdio MCP tools:
 
 - `memory_init`
 - `memory_project_context`
+- `memory_start_session`
+- `memory_bootstrap_session`
 - `memory_record_event`
 - `memory_recent_events`
 - `memory_write_handoff`
+- `memory_export`
+- `memory_purge`
 
 ## Non-goals for MVP
 

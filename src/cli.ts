@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
-import { doctorReport, exportMemory, initMemory, purgeMemory, recentEvents, recordEvent, startSession, writeHandoff } from "./memory.js";
+import type { HookInstallHost } from "./hooks.js";
+import { installHooks } from "./hooks.js";
 import { runMcpServer } from "./mcp.js";
+import { bootstrapSession, doctorReport, exportMemory, purgeMemory, recentEvents, recordEvent, startSession, writeHandoff } from "./memory.js";
+import { initMemory } from "./memoryDb.js";
 import type { HostName } from "./types.js";
 
 type CommandResult = {
@@ -43,10 +46,20 @@ function runCommand(command: string, subcommand: string | undefined, rest: reado
     return { ok: true, ...purgeMemory({ yes: args.includes("--yes") }) };
   }
 
+  if (command === "hooks" && subcommand === "install") {
+    return { ok: true, ...installHooks({ host: parseHookInstallHost(readFlag(rest, "--host") ?? "all") }) };
+  }
+
   if (command === "session" && subcommand === "start") {
     const host = parseHost(readFlag(rest, "--host") ?? "unknown");
     const adapter = readFlag(rest, "--adapter") ?? "unknown";
     return { ok: true, ...startSession({ host, adapter }) };
+  }
+
+  if (command === "session" && subcommand === "bootstrap") {
+    const host = parseHost(readFlag(rest, "--host") ?? "unknown");
+    const adapter = readFlag(rest, "--adapter") ?? "unknown";
+    return { ok: true, ...bootstrapSession({ host, adapter, limit: readPositiveIntFlag(rest, "--limit", 5) }) };
   }
 
   if (command === "event" && subcommand === "record") {
@@ -54,21 +67,26 @@ function runCommand(command: string, subcommand: string | undefined, rest: reado
     const summary = readFlag(rest, "--summary") ?? fail("event record requires --summary");
     const payloadJson = readFlag(rest, "--payload-json");
     const sessionId = readFlag(rest, "--session-id");
-    return { ok: true, ...recordEvent({ type, summary, ...(payloadJson === undefined ? {} : { payloadJson }), ...(sessionId === undefined ? {} : { sessionId }) }) };
+    return {
+      ok: true,
+      ...recordEvent({ type, summary, ...(payloadJson === undefined ? {} : { payloadJson }), ...(sessionId === undefined ? {} : { sessionId }) }),
+    };
   }
 
   if (command === "recent") {
-    const limitRaw = readFlag([subcommand, ...rest].filter((value): value is string => value !== undefined), "--limit");
-    const limit = limitRaw === undefined ? 10 : Number(limitRaw);
-    if (!Number.isInteger(limit) || limit <= 0) fail("recent --limit must be a positive integer");
-    return { ok: true, events: recentEvents(limit) };
+    const limitRaw = readFlag(
+      [subcommand, ...rest].filter((value): value is string => value !== undefined),
+      "--limit",
+    );
+    return { ok: true, events: recentEvents(parsePositiveInt(limitRaw, "recent --limit")) };
   }
 
   if (command === "handoff" && subcommand === "write") {
     const summary = readFlag(rest, "--summary");
     const summaryFile = readFlag(rest, "--summary-file");
     const sessionId = readFlag(rest, "--session-id");
-    const summaryMd = summary ?? (summaryFile === undefined ? undefined : readFileSync(summaryFile, "utf8")) ?? fail("handoff write requires --summary or --summary-file");
+    const summaryMd =
+      summary ?? (summaryFile === undefined ? undefined : readFileSync(summaryFile, "utf8")) ?? fail("handoff write requires --summary or --summary-file");
     return { ok: true, ...writeHandoff(summaryMd, sessionId) };
   }
 
@@ -88,12 +106,29 @@ function parseHost(value: string): HostName {
   fail("--host must be one of codex, opencode, grok, unknown");
 }
 
+function parseHookInstallHost(value: string): HookInstallHost {
+  if (value === "codex" || value === "grok" || value === "all") return value;
+  fail("--host must be one of codex, grok, all");
+}
+
+function readPositiveIntFlag(args: readonly string[], name: string, defaultValue: number): number {
+  return parsePositiveInt(readFlag(args, name) ?? String(defaultValue), name);
+}
+
+function parsePositiveInt(value: string | undefined, label: string): number {
+  const limit = value === undefined ? 10 : Number(value);
+  if (!Number.isInteger(limit) || limit <= 0) fail(`${label} must be a positive integer`);
+  return limit;
+}
+
 function fail(message: string): never {
   throw new Error(message);
 }
 
 function printHelp(): void {
-  process.stdout.write(`OMO Memory\n\nCommands:\n  omo-memory init\n  omo-memory doctor\n  omo-memory export\n  omo-memory purge --yes\n  omo-memory session start --host <codex|opencode|grok|unknown> --adapter <name>\n  omo-memory event record --type <type> --summary <text> [--session-id <id>]\n  omo-memory recent [--limit <n>]\n  omo-memory handoff write (--summary <text> | --summary-file <path>) [--session-id <id>]\n  omo-memory mcp\n`);
+  process.stdout.write(
+    `OMO Memory\n\nCommands:\n  omo-memory init\n  omo-memory doctor\n  omo-memory export\n  omo-memory purge --yes\n  omo-memory hooks install --host <codex|grok|all>\n  omo-memory session start --host <codex|opencode|grok|unknown> --adapter <name>\n  omo-memory session bootstrap --host <codex|opencode|grok|unknown> --adapter <name> [--limit <n>]\n  omo-memory event record --type <type> --summary <text> [--session-id <id>]\n  omo-memory recent [--limit <n>]\n  omo-memory handoff write (--summary <text> | --summary-file <path>) [--session-id <id>]\n  omo-memory mcp\n`,
+  );
 }
 
 main(process.argv.slice(2)).catch((error: unknown) => {

@@ -17,7 +17,7 @@ Codegraph solves code intelligence, not work/session memory. OMO needs a separat
 
 ## Product direction
 
-- Global local DB: `~/.omo/memory/state.sqlite`
+- Project-local DB: `<project-root>/.omo/memory/state.sqlite`
 - Project namespace: derive from git remote + repo root hash, with branch/head metadata
 - Local-first privacy: no cloud sync and no secret storage by default
 - Adapter-neutral schema: `host` and `adapter` are metadata, not separate products
@@ -58,7 +58,7 @@ Codegraph solves code intelligence, not work/session memory. OMO needs a separat
 
 ### CLI
 
-- `omo-memory init` creates or migrates `~/.omo/memory/state.sqlite`.
+- `omo-memory init` creates or migrates `<project-root>/.omo/memory/state.sqlite`.
 - `omo-memory session start --host grok --adapter lfg` records a session for the current project.
 - `omo-memory event record --type decision --summary "..."` appends a project/session event.
 - `omo-memory recent` lists recent project events.

@@ -1,16 +1,36 @@
 {
   "name": "omo-memory",
-  "version": "0.1.0",
+  "version": "0.1.9",
   "description": "Host-neutral local SQLite memory and session ledger for OMO adapters, exposed through CLI and MCP.",
   "type": "module",
-  "private": true,
+  "files": [
+    "dist",
+    "docs",
+    "README.md"
+  ],
   "bin": {
     "omo-memory": "dist/cli.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/islee23520/omo-memory.git"
+  },
+  "bugs": {
+    "url": "https://github.com/islee23520/omo-memory/issues"
+  },
+  "homepage": "https://github.com/islee23520/omo-memory#readme",
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "check": "npm run lint && npm run typecheck && npm run smoke",
     "start": "node dist/cli.js",
+    "prepack": "npm run build",
+    "presmoke": "npm run build",
     "smoke": "npm run smoke:cli && npm run smoke:mcp",
     "smoke:cli": "node scripts/smoke-cli.mjs",
     "smoke:mcp": "node scripts/smoke-mcp.mjs",
@@ -23,6 +43,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.10.1",
     "typescript": "^6.0.3"

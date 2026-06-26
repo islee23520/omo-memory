@@ -10,6 +10,14 @@ export type ProjectContext = {
 
 export type SessionStartInput = { readonly host: HostName; readonly adapter: string };
 
+export type SessionBootstrapInput = SessionStartInput & { readonly limit: number };
+
+export type SessionBootstrapResult = {
+  readonly sessionId: string;
+  readonly project: ProjectContext;
+  readonly recentEvents: readonly RecentEvent[];
+};
+
 export type EventRecordInput = {
   readonly type: string;
   readonly summary: string;

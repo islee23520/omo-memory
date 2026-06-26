@@ -1,6 +1,6 @@
 # Adapter Integration
 
-OMO Memory is the shared local work ledger for OMO adapters. It is host-neutral: lazycodex, omo-on-opencode, lfg, and future adapters all write summaries, decisions, QA evidence, task state, and handoffs to the same local SQLite database at `~/.omo/memory/state.sqlite` by default.
+OMO Memory is the shared local work ledger for OMO adapters. It is host-neutral: lazycodex, omo-on-opencode, lfg, and future adapters all write summaries, decisions, QA evidence, task state, and handoffs to the same project-local SQLite database at `<project-root>/.omo/memory/state.sqlite` by default.
 
 No full transcript capture by default. Do not store API keys, tokens, `.env` contents, auth files, raw tool logs, auth headers, cookies, or any other secret-bearing material.
 
@@ -11,6 +11,7 @@ No full transcript capture by default. Do not store API keys, tokens, `.env` con
 - Record concise events with a stable `type`, a human-readable `summary`, and optional redacted JSON metadata in `payloadJson`.
 - Store handoffs as summary markdown that another host can read without needing the originating transcript.
 - Treat CLI and MCP as two entrypoints to the same core functions and schema.
+- When a project directory moves with its `.omo` ledger, OMO Memory migrates matching project rows to the new root automatically.
 - Use `OMO_MEMORY_DB` only when the caller explicitly chooses a different database path, such as an isolated smoke test.
 
 ## Adapter Metadata
@@ -22,6 +23,19 @@ No full transcript capture by default. Do not store API keys, tokens, `.env` con
 | lfg | `grok` | `lfg` | Grok/GrokBuild-oriented harness memory. |
 
 ## CLI Examples
+
+After npm publish, adapters and users can invoke the packaged CLI directly:
+
+```sh
+npx -y omo-memory init
+npx -y omo-memory hooks install --host all
+npx -y omo-memory session bootstrap --host codex --adapter lazycodex --limit 5
+npx -y omo-memory session start --host codex --adapter lazycodex
+npx -y omo-memory session start --host grok --adapter lfg
+npx -y omo-memory recent --limit 10
+```
+
+For a source checkout:
 
 ```sh
 node dist/cli.js init
@@ -44,16 +58,89 @@ OMO_MEMORY_DB="$(mktemp -u /tmp/omo-memory.XXXXXX.sqlite)" node dist/cli.js init
 
 ## MCP Tools
 
-Adapters that run through MCP start:
+Adapters that run through MCP should register the packaged command after npm publish:
+
+```sh
+npx -y omo-memory mcp
+```
+
+For a source checkout:
 
 ```sh
 node dist/cli.js mcp
 ```
 
+Codex registration:
+
+```sh
+codex mcp add omo-memory -- npx -y omo-memory mcp
+```
+
+Grok registration:
+
+```sh
+grok mcp add omo-memory -- npx -y omo-memory mcp
+```
+
+Register the same MCP server in every host that needs memory access. Do not create separate Codex/Grok schemas or databases; host identity belongs in `memory_start_session` metadata.
+
+## Plugin-Style Host Install
+
+Install host-side passive behavior with:
+
+```sh
+npx -y omo-memory hooks install --host all
+```
+
+Supported `--host` values:
+
+- `codex`: installs `~/.codex/skills/omo-memory/SKILL.md`, an idempotent OMO Memory block in `~/.codex/AGENTS.md`, and a local Codex plugin with a `SessionStart` hook.
+- `grok`: installs `~/.grok/plugins/omo-memory` with `plugin.json`, a bundled skill, `hooks/hooks.json`, `.mcp.json`, and a SessionStart script. It also writes compatibility copies to `~/.grok/skills` and `~/.grok/hooks`.
+- `all`: installs both.
+
+The installer is idempotent and replaces only the marked `omo-memory` block in AGENTS files. For Codex it also registers the local plugin with `codex plugin add omo-memory@islee23520 --json` when installing into the real home directory. For Grok, `~/.grok/plugins/omo-memory` is a user plugin and is trusted automatically by Grok.
+
+## Session Bootstrap Flow
+
+At the beginning of a Codex, OpenCode, or Grok adapter session, call `memory_bootstrap_session` instead of separately calling `memory_start_session` and `memory_recent_events`.
+
+```json
+{
+  "tool": "memory_bootstrap_session",
+  "arguments": {
+    "host": "grok",
+    "adapter": "lfg",
+    "limit": 5
+  }
+}
+```
+
+The tool returns:
+
+- `sessionId`: the new session row for subsequent event/handoff writes.
+- `project`: the current git/project namespace.
+- `recentEvents`: recent events from the same project namespace.
+
+During the session, write concise task state and evidence with the returned `sessionId`:
+
+```json
+{
+  "tool": "memory_record_event",
+  "arguments": {
+    "type": "qa_evidence",
+    "summary": "npm-published MCP exposed memory_bootstrap_session and memory_recent_events.",
+    "sessionId": "<sessionId>"
+  }
+}
+```
+
+This package is the local MCP-to-SQLite router. It does not scrape host transcripts or centralize cloud state. Hosts and adapters must call the MCP tools at their own lifecycle points.
+
 Use these tools:
 
 - `memory_init`
 - `memory_project_context`
+- `memory_bootstrap_session`
 - `memory_start_session`
 - `memory_record_event`
 - `memory_recent_events`

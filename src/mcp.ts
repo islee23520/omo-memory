@@ -1,10 +1,22 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { exportMemory, initMemory, memoryPaths, purgeMemory, PurgeConfirmationError, recentEvents, recordEvent, resolveProjectContext, startSession, writeHandoff } from "./memory.js";
+import {
+  bootstrapSession,
+  exportMemory,
+  memoryPaths,
+  PurgeConfirmationError,
+  purgeMemory,
+  recentEvents,
+  recordEvent,
+  startSession,
+  writeHandoff,
+} from "./memory.js";
+import { initMemory } from "./memoryDb.js";
+import { resolveProjectContext } from "./projectContext.js";
 
 export async function runMcpServer(): Promise<void> {
-  const server = new McpServer({ name: "omo-memory", version: "0.1.0" });
+  const server = new McpServer({ name: "omo-memory", version: "0.1.2" });
 
   server.registerTool(
     "memory_init",
@@ -71,6 +83,21 @@ export async function runMcpServer(): Promise<void> {
   );
 
   server.registerTool(
+    "memory_bootstrap_session",
+    {
+      title: "Bootstrap OMO Session",
+      description:
+        "Start a host adapter session and return recent project memory in one call. Call this at the beginning of each Codex, OpenCode, or Grok session.",
+      inputSchema: {
+        host: z.enum(["codex", "opencode", "grok", "unknown"]),
+        adapter: z.string().min(1),
+        limit: z.number().int().positive().max(100).default(5),
+      },
+    },
+    async ({ host, adapter, limit }) => jsonResult(bootstrapSession({ host, adapter, limit })),
+  );
+
+  server.registerTool(
     "memory_record_event",
     {
       title: "Record OMO Memory Event",
@@ -82,7 +109,8 @@ export async function runMcpServer(): Promise<void> {
         sessionId: z.string().optional(),
       },
     },
-    async ({ type, summary, payloadJson, sessionId }) => jsonResult(recordEvent({ type, summary, ...(payloadJson === undefined ? {} : { payloadJson }), ...(sessionId === undefined ? {} : { sessionId }) })),
+    async ({ type, summary, payloadJson, sessionId }) =>
+      jsonResult(recordEvent({ type, summary, ...(payloadJson === undefined ? {} : { payloadJson }), ...(sessionId === undefined ? {} : { sessionId }) })),
   );
 
   server.registerTool(
