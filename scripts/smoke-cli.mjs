@@ -45,11 +45,18 @@ function pass(label) {
 
 try {
   const init = requireOk("init", runCli(["init"]));
-  if (init.dbPath !== dbPath || init.schemaVersion !== 1) throw new Error("init returned unexpected metadata");
+  if (init.dbPath !== dbPath || init.schemaVersion !== 2) throw new Error("init returned unexpected metadata");
   pass("init");
 
   const doctor = requireOk("doctor", runCli(["doctor"]));
-  if (doctor.paths?.dbPath !== dbPath || doctor.schemaVersion !== 1 || doctor.project?.id === undefined) throw new Error("doctor returned unexpected report");
+  if (doctor.paths?.dbPath !== dbPath || doctor.schemaVersion !== 2 || doctor.project?.id === undefined) throw new Error("doctor returned unexpected report");
+  if (
+    doctor.counts?.concepts !== 0 ||
+    doctor.counts?.relations !== 0 ||
+    doctor.counts?.durableMemories !== 0 ||
+    doctor.counts?.decisionRecords !== 0
+  )
+    throw new Error("doctor returned unexpected ontology counts");
   pass("doctor");
 
   const projectDefaultRepo = mkdtempSync(join(tempDir, "project-default-"));
@@ -150,6 +157,34 @@ try {
   if (typeof handoff.handoffId !== "string" || handoff.handoffId.length === 0) throw new Error("handoff write did not return handoffId");
   pass("handoff write");
 
+  const ontologyDb = new Database(dbPath);
+  try {
+    const now = new Date().toISOString();
+    ontologyDb
+      .prepare(
+        "INSERT INTO concepts (id, project_id, kind, label, description, aliases_json, payload_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run("concept-smoke", event.project.id, "practice", "Local ledger", "Project-local durable memory", '["ledger"]', "{}", now, now);
+    ontologyDb
+      .prepare(
+        "INSERT INTO durable_memories (id, project_id, type, summary, body, source_event_id, confidence, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run("memory-smoke", event.project.id, "preference", "Prefer local-first memory", "Keep OMO Memory local by default", event.eventId, 0.9, "active", now, now);
+    ontologyDb
+      .prepare(
+        "INSERT INTO decision_records (id, project_id, title, rationale, status, source_event_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run("decision-smoke", event.project.id, "Use ontology schema", "Graph-shaped memory needs first-class rows", "active", event.eventId, now, now);
+    ontologyDb
+      .prepare(
+        "INSERT INTO relations (id, project_id, source_type, source_id, target_type, target_id, relation, weight, payload_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run("relation-smoke", event.project.id, "decision_record", "decision-smoke", "concept", "concept-smoke", "describes", 1, "{}", now, now);
+  } finally {
+    ontologyDb.close();
+  }
+  pass("ontology seed");
+
   const recent = requireOk("recent", runCli(["recent", "--limit", "5"]));
   if (!Array.isArray(recent.events) || !recent.events.some((item) => item.summary.includes("[REDACTED]")))
     throw new Error("recent did not include redacted smoke event");
@@ -157,10 +192,30 @@ try {
 
   const exported = requireOk("export", runCli(["export"]));
   if (!Array.isArray(exported.events) || !JSON.stringify(exported).includes("[REDACTED]")) throw new Error("export did not include redacted data");
+  if (
+    !Array.isArray(exported.concepts) ||
+    exported.concepts.length !== 1 ||
+    !Array.isArray(exported.relations) ||
+    exported.relations.length !== 1 ||
+    !Array.isArray(exported.durableMemories) ||
+    exported.durableMemories.length !== 1 ||
+    !Array.isArray(exported.decisionRecords) ||
+    exported.decisionRecords.length !== 1
+  )
+    throw new Error("export did not include ontology rows");
   pass("export");
 
   const purge = requireOk("purge", runCli(["purge", "--yes"]));
-  if (purge.deleted?.events < 1 || purge.deleted?.handoffs < 1 || purge.deleted?.sessions < 1) throw new Error("purge did not delete expected rows");
+  if (
+    purge.deleted?.events < 1 ||
+    purge.deleted?.handoffs < 1 ||
+    purge.deleted?.sessions < 1 ||
+    purge.deleted?.concepts !== 1 ||
+    purge.deleted?.relations !== 1 ||
+    purge.deleted?.durableMemories !== 1 ||
+    purge.deleted?.decisionRecords !== 1
+  )
+    throw new Error("purge did not delete expected rows");
   pass("purge");
 
   const after = requireOk("recent after purge", runCli(["recent"]));

@@ -162,3 +162,16 @@ Example QA evidence:
 - Store sanitized summaries and evidence references instead of full logs.
 - Host-specific values may appear only in small redacted metadata payloads and must not require schema branches.
 - Export and purge are explicit lifecycle commands; purge requires explicit confirmation.
+
+## Ontology Schema Boundary
+
+OMO Memory's chronological ledger remains authoritative: sessions, events, and handoffs record what happened in a project. The ontology schema is an additive layer for durable memory derived from that ledger:
+
+- `concepts` stores vocabulary entries such as project terms, practices, tools, and recurring ideas.
+- `relations` stores typed links between concepts, decisions, events, sessions, and handoffs.
+- `durable_memories` stores approved long-term facts, preferences, and working rules.
+- `decision_records` stores important choices with rationale, evidence, status, reversibility, and provenance.
+
+Adapters must treat ontology rows as curated local memory, not as raw capture. Do not write full transcripts, raw logs, `.env` contents, auth files, cookies, bearer headers, or secret-bearing payloads into ontology tables. User-authored text must pass through the same redaction boundary used by event and handoff writes before it is promoted into durable memory.
+
+The ontology layer is intentionally not a new adapter surface by itself. CLI and MCP commands should continue to call shared core functions, and future concept/decision commands must not create host-specific schemas or side databases.

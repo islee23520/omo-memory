@@ -108,7 +108,7 @@ try {
   }
 
   const init = parseToolText(await callTool(child, "memory_init"));
-  if (init.dbPath !== dbPath || init.schemaVersion !== 1) throw new Error("memory_init returned unexpected metadata");
+  if (init.dbPath !== dbPath || init.schemaVersion !== 2) throw new Error("memory_init returned unexpected metadata");
   pass("memory_init call");
 
   const context = parseToolText(await callTool(child, "memory_project_context"));
