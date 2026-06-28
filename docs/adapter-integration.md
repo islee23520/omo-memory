@@ -32,6 +32,7 @@ npx -y omo-memory session bootstrap --host codex --adapter lazycodex --limit 5
 npx -y omo-memory session start --host codex --adapter lazycodex
 npx -y omo-memory session start --host grok --adapter lfg
 npx -y omo-memory recent --limit 10
+npx -y omo-memory recall --query "current roadmap decision" --limit 10
 ```
 
 For a source checkout:
@@ -45,6 +46,7 @@ node dist/cli.js event record --type decision --summary "Use OMO Memory as the s
 node dist/cli.js event record --type qa_evidence --summary "CLI smoke passed for init/session/event/recent."
 node dist/cli.js handoff write --summary "Continue from recent decision and qa_evidence events."
 node dist/cli.js recent --limit 10
+node dist/cli.js recall --query "qa evidence" --limit 10
 node dist/cli.js export
 node dist/cli.js purge --yes
 ```
@@ -85,7 +87,7 @@ Register the same MCP server in every host that needs memory access. Do not crea
 
 ## Session Bootstrap Flow
 
-At the beginning of a Codex, OpenCode, or Grok adapter session, call `memory_bootstrap_session` instead of separately calling `memory_start_session` and `memory_recent_events`.
+At the beginning of a Codex, OpenCode, or Grok adapter session, call `memory_bootstrap_session` only when the adapter needs a session id for subsequent writes. Do not use bootstrap as a prompt-time memory injection hook.
 
 ```json
 {
@@ -102,9 +104,8 @@ The tool returns:
 
 - `sessionId`: the new session row for subsequent event/handoff writes.
 - `project`: the current git/project namespace.
-- `recentEvents`: recent events from the same project namespace.
 
-During the session, write concise task state and evidence with the returned `sessionId`:
+During the session, hooks should write concise user-action summaries, task state, decisions, and evidence with the returned `sessionId`:
 
 ```json
 {
@@ -119,6 +120,13 @@ During the session, write concise task state and evidence with the returned `ses
 
 This package is the local MCP-to-SQLite router. It does not scrape host transcripts or centralize cloud state. Hosts and adapters must call the MCP tools at their own lifecycle points.
 
+Retrieval is opt-in or intent-gated:
+
+- Use `memory_recent_events` only when the user explicitly asks for recent OMO Memory context.
+- Use `memory_recall_events` when the current user input has a concrete query that can be matched to recorded summaries, decisions, or evidence.
+- Do not automatically attach the last session to every user prompt.
+- Do not store raw user prompts by default; record concise, redacted action summaries.
+
 Use these tools:
 
 - `memory_init`
@@ -127,6 +135,7 @@ Use these tools:
 - `memory_start_session`
 - `memory_record_event`
 - `memory_recent_events`
+- `memory_recall_events`
 - `memory_write_handoff`
 - `memory_export`
 - `memory_purge`

@@ -13,6 +13,7 @@ const expectedTools = [
   "memory_project_context",
   "memory_start_session",
   "memory_bootstrap_session",
+  "memory_recall_events",
   "memory_record_event",
   "memory_recent_events",
   "memory_write_handoff",
@@ -56,6 +57,13 @@ function parseToolText(response) {
 
 function callTool(child, name, args = {}) {
   return send(child, "tools/call", { name, arguments: args });
+}
+
+async function expectToolError(child, name, args = {}) {
+  const response = await callTool(child, name, args);
+  const text = response.result?.content?.find((item) => item.type === "text")?.text;
+  if (typeof text === "string" && text.includes("Input validation error")) return;
+  throw new Error(`${name} did not return validation error text`);
 }
 
 function waitForExit(child) {
@@ -116,11 +124,10 @@ try {
   pass("memory_project_context call");
 
   const bootstrap = parseToolText(await callTool(child, "memory_bootstrap_session", { host: "codex", adapter: "smoke-mcp", limit: 5 }));
-  if (typeof bootstrap.sessionId !== "string" || !Array.isArray(bootstrap.recentEvents))
-    throw new Error("memory_bootstrap_session returned unexpected payload");
+  if (typeof bootstrap.sessionId !== "string" || "recentEvents" in bootstrap) throw new Error("memory_bootstrap_session returned unexpected payload");
   pass("memory_bootstrap_session call");
 
-  const event = parseToolText(await callTool(child, "memory_record_event", { type: "smoke.mcp", summary: "MCP smoke token=sk-test1234567890" }));
+  const event = parseToolText(await callTool(child, "memory_record_event", { type: "user_action", summary: "MCP smoke token=sk-test1234567890" }));
   if (typeof event.eventId !== "string") throw new Error("memory_record_event did not return eventId");
   pass("memory_record_event call");
 
@@ -128,6 +135,20 @@ try {
   if (!Array.isArray(recent.events) || !recent.events.some((item) => item.summary.includes("[REDACTED]")))
     throw new Error("memory_recent_events did not include redacted event");
   pass("memory_recent_events call");
+
+  const recall = parseToolText(await callTool(child, "memory_recall_events", { query: "MCP smoke", limit: 5 }));
+  if (!Array.isArray(recall.events) || !recall.events.some((item) => item.summary.includes("[REDACTED]")))
+    throw new Error("memory_recall_events did not include matching redacted event");
+  const unrelatedRecall = parseToolText(await callTool(child, "memory_recall_events", { query: "unrelated watercolor calendar", limit: 5 }));
+  if (!Array.isArray(unrelatedRecall.events) || unrelatedRecall.events.length !== 0) throw new Error("memory_recall_events returned unrelated events");
+  const genericHookRecall = parseToolText(await callTool(child, "memory_recall_events", { query: "unrelated user action profile button", limit: 5 }));
+  if (!Array.isArray(genericHookRecall.events) || genericHookRecall.events.length !== 0) throw new Error("memory_recall_events matched generic hook words");
+  const underscoreRecall = parseToolText(await callTool(child, "memory_recall_events", { query: "user_action", limit: 5 }));
+  if (!Array.isArray(underscoreRecall.events) || underscoreRecall.events.length !== 0) throw new Error("memory_recall_events treated underscore as wildcard");
+  const wildcardRecall = parseToolText(await callTool(child, "memory_recall_events", { query: "___", limit: 5 }));
+  if (!Array.isArray(wildcardRecall.events) || wildcardRecall.events.length !== 0) throw new Error("memory_recall_events treated wildcard query as pattern");
+  await expectToolError(child, "memory_recall_events", { query: "", limit: 5 });
+  pass("memory_recall_events call");
 
   const handoff = parseToolText(await callTool(child, "memory_write_handoff", { summaryMd: "MCP smoke handoff Bearer abcdef123456" }));
   if (typeof handoff.handoffId !== "string") throw new Error("memory_write_handoff did not return handoffId");

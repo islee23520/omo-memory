@@ -1,18 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import {
-  bootstrapSession,
-  exportMemory,
-  memoryPaths,
-  PurgeConfirmationError,
-  purgeMemory,
-  recentEvents,
-  recordEvent,
-  startSession,
-  writeHandoff,
-} from "./memory.js";
+import { bootstrapSession, exportMemory, PurgeConfirmationError, purgeMemory, recentEvents, recordEvent, startSession, writeHandoff } from "./memory.js";
 import { initMemory } from "./memoryDb.js";
+import { recallEvents } from "./memoryRecall.js";
+import { memoryPaths } from "./memoryReport.js";
 import { resolveProjectContext } from "./projectContext.js";
 
 export async function runMcpServer(): Promise<void> {
@@ -86,8 +78,7 @@ export async function runMcpServer(): Promise<void> {
     "memory_bootstrap_session",
     {
       title: "Bootstrap OMO Session",
-      description:
-        "Start a host adapter session and return recent project memory in one call. Call this at the beginning of each Codex, OpenCode, or Grok session.",
+      description: "Start a host adapter session without reading or injecting recent memory.",
       inputSchema: {
         host: z.enum(["codex", "opencode", "grok", "unknown"]),
         adapter: z.string().min(1),
@@ -95,6 +86,19 @@ export async function runMcpServer(): Promise<void> {
       },
     },
     async ({ host, adapter, limit }) => jsonResult(bootstrapSession({ host, adapter, limit })),
+  );
+
+  server.registerTool(
+    "memory_recall_events",
+    {
+      title: "Recall OMO Memory Events",
+      description: "Return recorded events only when the query text matches stored intent or content.",
+      inputSchema: {
+        query: z.string().min(1),
+        limit: z.number().int().positive().max(100).default(10),
+      },
+    },
+    async ({ query, limit }) => jsonResult({ events: recallEvents({ query, limit }) }),
   );
 
   server.registerTool(

@@ -15,8 +15,9 @@ export type SessionBootstrapInput = SessionStartInput & { readonly limit: number
 export type SessionBootstrapResult = {
   readonly sessionId: string;
   readonly project: ProjectContext;
-  readonly recentEvents: readonly RecentEvent[];
 };
+
+export type MemoryRecallInput = { readonly query: string; readonly limit: number };
 
 export type EventRecordInput = {
   readonly type: string;

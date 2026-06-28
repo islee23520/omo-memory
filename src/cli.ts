@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
 import { runMcpServer } from "./mcp.js";
-import { bootstrapSession, doctorReport, exportMemory, purgeMemory, recentEvents, recordEvent, startSession, writeHandoff } from "./memory.js";
+import { bootstrapSession, exportMemory, purgeMemory, recentEvents, recordEvent, startSession, writeHandoff } from "./memory.js";
 import { initMemory } from "./memoryDb.js";
+import { recallEvents } from "./memoryRecall.js";
+import { doctorReport } from "./memoryReport.js";
 import type { HostName } from "./types.js";
 
 type CommandResult = {
@@ -75,6 +77,12 @@ function runCommand(command: string, subcommand: string | undefined, rest: reado
     return { ok: true, events: recentEvents(parsePositiveInt(limitRaw, "recent --limit")) };
   }
 
+  if (command === "recall") {
+    const args = [subcommand, ...rest].filter((value): value is string => value !== undefined);
+    const query = readFlag(args, "--query") ?? fail("recall requires --query");
+    return { ok: true, events: recallEvents({ query, limit: readPositiveIntFlag(args, "--limit", 10) }) };
+  }
+
   if (command === "handoff" && subcommand === "write") {
     const summary = readFlag(rest, "--summary");
     const summaryFile = readFlag(rest, "--summary-file");
@@ -116,7 +124,7 @@ function fail(message: string): never {
 
 function printHelp(): void {
   process.stdout.write(
-    `OMO Memory\n\nCommands:\n  omo-memory init\n  omo-memory doctor\n  omo-memory export\n  omo-memory purge --yes\n  omo-memory session start --host <codex|opencode|grok|unknown> --adapter <name>\n  omo-memory session bootstrap --host <codex|opencode|grok|unknown> --adapter <name> [--limit <n>]\n  omo-memory event record --type <type> --summary <text> [--session-id <id>]\n  omo-memory recent [--limit <n>]\n  omo-memory handoff write (--summary <text> | --summary-file <path>) [--session-id <id>]\n  omo-memory mcp\n`,
+    `OMO Memory\n\nCommands:\n  omo-memory init\n  omo-memory doctor\n  omo-memory export\n  omo-memory purge --yes\n  omo-memory session start --host <codex|opencode|grok|unknown> --adapter <name>\n  omo-memory session bootstrap --host <codex|opencode|grok|unknown> --adapter <name> [--limit <n>]\n  omo-memory event record --type <type> --summary <text> [--session-id <id>]\n  omo-memory recent [--limit <n>]\n  omo-memory recall --query <text> [--limit <n>]\n  omo-memory handoff write (--summary <text> | --summary-file <path>) [--session-id <id>]\n  omo-memory mcp\n`,
   );
 }
 

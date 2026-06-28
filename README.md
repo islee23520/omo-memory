@@ -35,6 +35,7 @@ After the package is published to npm, use the same package for CLI and MCP:
 npx -y omo-memory init
 npx -y omo-memory session bootstrap --host codex --adapter lazycodex --limit 5
 npx -y omo-memory recent --limit 5
+npx -y omo-memory recall --query "why did we choose sqlite" --limit 5
 npx -y omo-memory mcp
 ```
 
@@ -67,7 +68,7 @@ Both hosts use the current project ledger at `<project-root>/.omo/memory/state.s
 
 ## Session bootstrap
 
-Adapters should call the bootstrap tool at the beginning of each host session:
+Adapters may call the bootstrap tool when they need a session id for later writes:
 
 ```json
 {
@@ -80,7 +81,7 @@ Adapters should call the bootstrap tool at the beginning of each host session:
 }
 ```
 
-The response contains a new `sessionId` plus `recentEvents` for the current project. Reuse that `sessionId` when recording follow-up events:
+The response contains a new `sessionId` and project metadata only. It deliberately does not return recent memory, because starting a session should not inject the last session into every user prompt. Reuse that `sessionId` when recording follow-up events:
 
 ```json
 {
@@ -93,7 +94,16 @@ The response contains a new `sessionId` plus `recentEvents` for the current proj
 }
 ```
 
-This is local routing, not transcript scraping. OMO Memory does not automatically read full Codex or Grok transcripts; the host or adapter must call these MCP tools.
+This is local routing, not transcript scraping. OMO Memory does not automatically read full Codex or Grok transcripts. Hooks should record concise user actions, decisions, QA evidence, and handoffs; they should retrieve memory only when the user explicitly asks for OMO Memory or when the current user input can be matched to recorded intent.
+
+Use explicit retrieval for memory reads:
+
+```sh
+omo-memory recent --limit 5
+omo-memory recall --query "schema migration decision" --limit 5
+```
+
+For MCP, use `memory_recent_events` for explicit recent-history requests and `memory_recall_events` for query-gated recall.
 
 ## MCP tools
 
@@ -105,6 +115,7 @@ Initial stdio MCP tools:
 - `memory_bootstrap_session`
 - `memory_record_event`
 - `memory_recent_events`
+- `memory_recall_events`
 - `memory_write_handoff`
 - `memory_export`
 - `memory_purge`

@@ -50,12 +50,7 @@ try {
 
   const doctor = requireOk("doctor", runCli(["doctor"]));
   if (doctor.paths?.dbPath !== dbPath || doctor.schemaVersion !== 2 || doctor.project?.id === undefined) throw new Error("doctor returned unexpected report");
-  if (
-    doctor.counts?.concepts !== 0 ||
-    doctor.counts?.relations !== 0 ||
-    doctor.counts?.durableMemories !== 0 ||
-    doctor.counts?.decisionRecords !== 0
-  )
+  if (doctor.counts?.concepts !== 0 || doctor.counts?.relations !== 0 || doctor.counts?.durableMemories !== 0 || doctor.counts?.decisionRecords !== 0)
     throw new Error("doctor returned unexpected ontology counts");
   pass("doctor");
 
@@ -129,7 +124,7 @@ try {
   pass("session start");
 
   const bootstrap = requireOk("session bootstrap", runCli(["session", "bootstrap", "--host", "codex", "--adapter", "smoke-cli", "--limit", "5"]));
-  if (typeof bootstrap.sessionId !== "string" || !Array.isArray(bootstrap.recentEvents)) throw new Error("session bootstrap returned unexpected payload");
+  if (typeof bootstrap.sessionId !== "string" || "recentEvents" in bootstrap) throw new Error("session bootstrap should not return recentEvents");
   pass("session bootstrap");
 
   const event = requireOk(
@@ -138,7 +133,7 @@ try {
       "event",
       "record",
       "--type",
-      "smoke.cli",
+      "user_action",
       "--summary",
       "CLI smoke token=sk-test1234567890",
       "--payload-json",
@@ -169,7 +164,18 @@ try {
       .prepare(
         "INSERT INTO durable_memories (id, project_id, type, summary, body, source_event_id, confidence, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
-      .run("memory-smoke", event.project.id, "preference", "Prefer local-first memory", "Keep OMO Memory local by default", event.eventId, 0.9, "active", now, now);
+      .run(
+        "memory-smoke",
+        event.project.id,
+        "preference",
+        "Prefer local-first memory",
+        "Keep OMO Memory local by default",
+        event.eventId,
+        0.9,
+        "active",
+        now,
+        now,
+      );
     ontologyDb
       .prepare(
         "INSERT INTO decision_records (id, project_id, title, rationale, status, source_event_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -189,6 +195,19 @@ try {
   if (!Array.isArray(recent.events) || !recent.events.some((item) => item.summary.includes("[REDACTED]")))
     throw new Error("recent did not include redacted smoke event");
   pass("recent");
+
+  const recall = requireOk("recall", runCli(["recall", "--query", "CLI smoke", "--limit", "5"]));
+  if (!Array.isArray(recall.events) || !recall.events.some((item) => item.summary.includes("[REDACTED]")))
+    throw new Error("recall did not include matching redacted smoke event");
+  const unrelatedRecall = requireOk("recall unrelated", runCli(["recall", "--query", "unrelated watercolor calendar", "--limit", "5"]));
+  if (!Array.isArray(unrelatedRecall.events) || unrelatedRecall.events.length !== 0) throw new Error("recall returned unrelated events");
+  const genericHookRecall = requireOk("recall generic hook words", runCli(["recall", "--query", "unrelated user action profile button", "--limit", "5"]));
+  if (!Array.isArray(genericHookRecall.events) || genericHookRecall.events.length !== 0) throw new Error("recall matched generic hook words");
+  const underscoreRecall = requireOk("recall underscore literal", runCli(["recall", "--query", "user_action", "--limit", "5"]));
+  if (!Array.isArray(underscoreRecall.events) || underscoreRecall.events.length !== 0) throw new Error("recall treated underscore as wildcard");
+  const wildcardRecall = requireOk("recall wildcard literal", runCli(["recall", "--query", "___", "--limit", "5"]));
+  if (!Array.isArray(wildcardRecall.events) || wildcardRecall.events.length !== 0) throw new Error("recall treated wildcard query as pattern");
+  pass("recall");
 
   const exported = requireOk("export", runCli(["export"]));
   if (!Array.isArray(exported.events) || !JSON.stringify(exported).includes("[REDACTED]")) throw new Error("export did not include redacted data");

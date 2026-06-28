@@ -7,13 +7,11 @@ import { resolveStoredProject } from "./projectMigration.js";
 import type {
   ConceptExportRow,
   DecisionRecordExportRow,
-  DoctorReport,
   DurableMemoryExportRow,
   EventExportRow,
   EventRecordInput,
   HandoffExportRow,
   MemoryExport,
-  MemoryPaths,
   ProjectContext,
   PurgeMemoryInput,
   PurgeMemoryResult,
@@ -29,37 +27,6 @@ export class PurgeConfirmationError extends Error {
   constructor() {
     super("purge requires --yes");
     this.name = "PurgeConfirmationError";
-  }
-}
-
-export function memoryPaths(): MemoryPaths {
-  return { dbPath: defaultDbPath() };
-}
-
-export function doctorReport(dbPath = defaultDbPath()): DoctorReport {
-  const db = openMemoryDb(dbPath);
-  try {
-    migrate(db);
-    const project = resolveStoredProject(db, resolveProjectContext());
-    const schemaVersion = Number(db.prepare("SELECT value FROM schema_meta WHERE key = 'schema_version'").pluck().get());
-    const count = (table: string): number => Number(db.prepare(`SELECT COUNT(*) FROM ${table}`).pluck().get());
-    return {
-      paths: { dbPath },
-      schemaVersion,
-      project,
-      counts: {
-        projects: count("projects"),
-        sessions: count("sessions"),
-        events: count("events"),
-        handoffs: count("handoffs"),
-        concepts: count("concepts"),
-        relations: count("relations"),
-        durableMemories: count("durable_memories"),
-        decisionRecords: count("decision_records"),
-      },
-    };
-  } finally {
-    db.close();
   }
 }
 
@@ -93,8 +60,7 @@ export function startSession(input: SessionStartInput, dbPath = defaultDbPath())
 }
 
 export function bootstrapSession(input: SessionBootstrapInput, dbPath = defaultDbPath()): SessionBootstrapResult {
-  const session = startSession({ host: input.host, adapter: input.adapter }, dbPath);
-  return { ...session, recentEvents: recentEvents(input.limit, dbPath) };
+  return startSession({ host: input.host, adapter: input.adapter }, dbPath);
 }
 
 export function recordEvent(input: EventRecordInput, dbPath = defaultDbPath()): { readonly eventId: string; readonly project: ProjectContext } {
