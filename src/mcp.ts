@@ -1,6 +1,8 @@
+import { readFileSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { registerGlobalOntologyTools } from "./mcpOntologyTools.js";
 import { bootstrapSession, exportMemory, PurgeConfirmationError, purgeMemory, recentEvents, recordEvent, startSession, writeHandoff } from "./memory.js";
 import { initMemory } from "./memoryDb.js";
 import { recallEvents } from "./memoryRecall.js";
@@ -8,7 +10,7 @@ import { memoryPaths } from "./memoryReport.js";
 import { resolveProjectContext } from "./projectContext.js";
 
 export async function runMcpServer(): Promise<void> {
-  const server = new McpServer({ name: "omo-memory", version: "0.1.2" });
+  const server = new McpServer({ name: "omo-memory", version: readPackageVersion() });
 
   server.registerTool(
     "memory_init",
@@ -60,6 +62,8 @@ export async function runMcpServer(): Promise<void> {
       }
     },
   );
+
+  registerGlobalOntologyTools(server);
 
   server.registerTool(
     "memory_start_session",
@@ -143,6 +147,17 @@ export async function runMcpServer(): Promise<void> {
   );
 
   await server.connect(new StdioServerTransport());
+}
+
+function readPackageVersion(): string {
+  const rawPackage: unknown = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  if (!isObject(rawPackage)) return "0.0.0";
+  const version = rawPackage["version"];
+  return typeof version === "string" && version.length > 0 ? version : "0.0.0";
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object";
 }
 
 function jsonResult(value: unknown): { content: { type: "text"; text: string }[] } {

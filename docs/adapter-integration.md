@@ -139,6 +139,52 @@ Use these tools:
 - `memory_write_handoff`
 - `memory_export`
 - `memory_purge`
+- `memory_global_scan`
+- `memory_global_migrate`
+- `memory_global_list`
+- `memory_ontology_candidates`
+- `memory_ontology_extract`
+- `memory_ontology_score`
+- `memory_ontology_promote`
+- `memory_ontology_demote`
+- `memory_ontology_supersede`
+- `memory_ontology_recall`
+
+Global migration is copy/import only. Adapters may scan for existing project-local `.omo/memory/state.sqlite` databases and import them into a user-selected global SQLite file, but they must preserve source DBs and retain source provenance in the global store.
+
+Global migration also materializes an aggregate OMO schema view inside the global SQLite file. This lets existing ontology extraction, retention scoring, recall, and OpenTUI graph code operate on integrated cross-project events while `global_*` tables retain source database provenance.
+
+Example global second-brain flow:
+
+```sh
+omo-memory global scan --root /Users/ilseoblee/workspace
+omo-memory global migrate --root /Users/ilseoblee/workspace --global-db ~/.omo/memory/global.sqlite
+OMO_MEMORY_DB=~/.omo/memory/global.sqlite omo-memory ontology candidates
+OMO_MEMORY_DB=~/.omo/memory/global.sqlite omo-memory ontology score
+bun --version
+omo-memory graph tui --db ~/.omo/memory/global.sqlite --query linaforge
+```
+
+`graph tui` requires `bun` on `PATH` for the OpenTUI terminal renderer. Other CLI and MCP commands run on Node.
+
+Lifecycle commands:
+
+- `memory_ontology_candidates`: derive candidate terms from concise summaries.
+- `memory_ontology_extract`: explicitly extract candidates from one summary/event.
+- `memory_ontology_score`: recompute deterministic scores and retention classes.
+- `memory_ontology_promote`: curate a concept into durable memory.
+- `memory_ontology_demote`: lower a durable memory's retention class.
+- `memory_ontology_supersede`: preserve the old memory and create a replacement.
+- `memory_ontology_recall`: retrieve ontology-backed memories only for an explicit query.
+
+OpenTUI graph controls:
+
+- `q`: quit.
+- `Up` / `Down`: move selected concept.
+- `Tab`: move to the next concept.
+- `/` or `f`: focus filter input when supported by the terminal runtime.
+
+The graph UI is local terminal UI. It does not require a browser, web server, cloud account, or vector service.
 
 Example session start:
 
@@ -184,3 +230,45 @@ OMO Memory's chronological ledger remains authoritative: sessions, events, and h
 Adapters must treat ontology rows as curated local memory, not as raw capture. Do not write full transcripts, raw logs, `.env` contents, auth files, cookies, bearer headers, or secret-bearing payloads into ontology tables. User-authored text must pass through the same redaction boundary used by event and handoff writes before it is promoted into durable memory.
 
 The ontology layer is intentionally not a new adapter surface by itself. CLI and MCP commands should continue to call shared core functions, and future concept/decision commands must not create host-specific schemas or side databases.
+
+## Retention Scoring Policy (Deterministic Contract)
+
+Retention classification is strictly deterministic. There is no ML, embeddings, or hidden model. A pure function maps explicit signals to a numeric score and then to one of five classes.
+
+Classes (in ascending durability):
+
+- `forget`: score < 30 (or after decay/contradiction). Safe to drop.
+- `temporary`: 30 <= score < 50. Short-term context only.
+- `working`: 50 <= score < 75. Active task/iteration memory.
+- `durable`: 75 <= score < 90. Cross-session value; survives typical decay.
+- `permanent`: score >= 90, or any manually pinned item. Manual pin is a hard override.
+
+Manual pin rule (critical): an item with `manualPin: true` is always classified `permanent` regardless of raw score, age, or frequency. Decay jobs and age-based expiration MUST NOT remove or downgrade pinned permanent memory; only explicit supersede/demote/purge may change it.
+
+### Score Formula (pure, exposed)
+
+Exported constants (see `src/retentionPolicy.ts`):
+
+- `RETENTION_CLASSES = ["forget", "temporary", "working", "durable", "permanent"] as const`
+- `RETENTION_THRESHOLDS = { forget: 0, temporary: 30, working: 50, durable: 75, permanent: 90 } as const`
+- `RETENTION_WEIGHTS = { frequency: 4.5, spread: 7, decision: 12, qa: 10, relation: 4, confidence: 10, recencyBase: 18, recencyPerDay: 0.55, agePerDay: 0.12, ageCap: 22, contradiction: 9 } as const`
+
+```
+score = clamp(
+  frequency * 4.5
+  + spread * 7
+  + decisionWeight * 12
+  + qaWeight * 10
+  + relationDegree * 4
+  + confidence * 10
+  + max(0, 18 - recencyDays * 0.55)
+  - min(22, ageDays * 0.12)
+  - contradictionCount * 9
+, 0, 110)
+```
+
+`computeRetentionScore(input)` returns the rounded integer. `classifyRetention(score, manualPin)` returns the class, applying the pin override first.
+
+Boundary cases (score, pin=false): 29→forget, 30→temporary, 49→temporary, 50→working, 74→working, 75→durable, 89→durable, 90→permanent. These are verified by the focused contract test.
+
+All scoring inputs are derived from ledger signals (event counts, last-seen deltas, project spread from index, decision/qa event types, explicit relation degree, stored confidence, manual pin flag, contradiction markers). No raw transcripts or secrets are inputs.

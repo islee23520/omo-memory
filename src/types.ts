@@ -64,6 +64,7 @@ export type MemoryExport = {
   readonly relations: readonly RelationExportRow[];
   readonly durableMemories: readonly DurableMemoryExportRow[];
   readonly decisionRecords: readonly DecisionRecordExportRow[];
+  readonly memoryReferences: readonly MemoryReferenceExportRow[];
 };
 
 export type PurgeMemoryInput = { readonly yes: boolean };
@@ -110,6 +111,13 @@ export type ConceptExportRow = {
   readonly validTo: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
+  readonly score: number;
+  readonly retentionClass: string;
+  readonly manualPin: number;
+  readonly refCount: number;
+  readonly projectSpread: number;
+  readonly firstSeen: string | null;
+  readonly lastSeen: string | null;
 };
 
 export type RelationExportRow = {
@@ -136,6 +144,7 @@ export type DurableMemoryExportRow = {
   readonly sourceHandoffId: string | null;
   readonly confidence: number;
   readonly status: string;
+  readonly retentionClass: string;
   readonly validFrom: string | null;
   readonly validTo: string | null;
   readonly createdAt: string;
@@ -158,6 +167,17 @@ export type DecisionRecordExportRow = {
   readonly updatedAt: string;
 };
 
+export type MemoryReferenceExportRow = {
+  readonly id: string;
+  readonly sourceType: string;
+  readonly sourceId: string;
+  readonly targetType: string;
+  readonly targetId: string;
+  readonly refKind: string;
+  readonly weight: number;
+  readonly createdAt: string;
+};
+
 export type DeleteCounts = {
   readonly events: number;
   readonly handoffs: number;
@@ -167,4 +187,5 @@ export type DeleteCounts = {
   readonly relations: number;
   readonly durableMemories: number;
   readonly decisionRecords: number;
+  readonly memoryReferences: number;
 };

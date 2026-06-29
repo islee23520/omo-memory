@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import Database from "better-sqlite3";
 import { defaultDbPath } from "./projectContext.js";
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export function openMemoryDb(dbPath = defaultDbPath()): Database.Database {
   mkdirSync(dirname(dbPath), { recursive: true });
@@ -142,8 +142,71 @@ export function migrate(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_relations_project_source ON relations(project_id, source_type, source_id);
     CREATE INDEX IF NOT EXISTS idx_relations_project_target ON relations(project_id, target_type, target_id);
     CREATE INDEX IF NOT EXISTS idx_relations_project_relation ON relations(project_id, relation);
+
+    CREATE TABLE IF NOT EXISTS memory_references (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      source_type TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      target_type TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      ref_kind TEXT NOT NULL DEFAULT 'mentions',
+      weight REAL NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY(project_id) REFERENCES projects(id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_memory_references_project_source ON memory_references(project_id, source_type, source_id);
   `);
+
+  // schema v3 upgrade: add retention/reference columns to existing v1/v2 DBs (idempotent)
+  const addCol = (sql: string) => {
+    try {
+      db.exec(sql);
+    } catch (e: unknown) {
+      const m = String((e as Error).message || e);
+      if (!/duplicate column name|already exists/i.test(m)) throw e;
+    }
+  };
+  addCol("ALTER TABLE concepts ADD COLUMN score REAL NOT NULL DEFAULT 0");
+  addCol("ALTER TABLE concepts ADD COLUMN retention_class TEXT NOT NULL DEFAULT 'working'");
+  addCol("ALTER TABLE concepts ADD COLUMN manual_pin INTEGER NOT NULL DEFAULT 0");
+  addCol("ALTER TABLE concepts ADD COLUMN ref_count INTEGER NOT NULL DEFAULT 0");
+  addCol("ALTER TABLE concepts ADD COLUMN project_spread INTEGER NOT NULL DEFAULT 1");
+  addCol("ALTER TABLE concepts ADD COLUMN first_seen TEXT");
+  addCol("ALTER TABLE concepts ADD COLUMN last_seen TEXT");
+  addCol("ALTER TABLE durable_memories ADD COLUMN retention_class TEXT NOT NULL DEFAULT 'durable'");
+  compactMemoryReferences(db);
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_references_unique_edge ON memory_references(
+      project_id, source_type, source_id, target_type, target_id, ref_kind
+    )
+  `);
+  recomputeConceptReferenceCounts(db);
   db.prepare("INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', ?)").run(String(SCHEMA_VERSION));
+}
+
+function compactMemoryReferences(db: Database.Database): void {
+  db.exec(`
+    DELETE FROM memory_references
+    WHERE id NOT IN (
+      SELECT MIN(id)
+      FROM memory_references
+      GROUP BY project_id, source_type, source_id, target_type, target_id, ref_kind
+    )
+  `);
+}
+
+function recomputeConceptReferenceCounts(db: Database.Database): void {
+  db.exec(`
+    UPDATE concepts
+       SET ref_count = (
+         SELECT COUNT(*)
+           FROM memory_references
+          WHERE memory_references.project_id = concepts.project_id
+            AND memory_references.target_type = 'concept'
+            AND memory_references.target_id = concepts.id
+       )
+  `);
 }
 
 export function initMemory(dbPath = defaultDbPath()): { readonly dbPath: string; readonly schemaVersion: number } {

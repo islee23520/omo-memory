@@ -21,8 +21,14 @@ It gives lazycodex, omo-on-opencode, lfg, and future OMO adapters a shared local
 npm install
 npm run build
 node dist/cli.js init
+node dist/cli.js global scan --root ..
+node dist/cli.js global migrate --root .. --global-db ~/.omo/memory/global.sqlite
 node dist/cli.js session start --host grok --adapter lfg
 node dist/cli.js event record --type decision --summary "Chose SQLite + MCP + CLI for OMO shared memory"
+node dist/cli.js ontology candidates
+node dist/cli.js ontology score
+node dist/cli.js ontology recall --query "sqlite retention"
+node dist/cli.js graph tui
 node dist/cli.js recent
 node dist/cli.js mcp
 ```
@@ -33,7 +39,11 @@ After the package is published to npm, use the same package for CLI and MCP:
 
 ```sh
 npx -y omo-memory init
+npx -y omo-memory global scan --root .
+npx -y omo-memory global migrate --root . --global-db ~/.omo/memory/global.sqlite
 npx -y omo-memory session bootstrap --host codex --adapter lazycodex --limit 5
+npx -y omo-memory ontology recall --query "why did we choose sqlite" --limit 5
+npx -y omo-memory graph tui
 npx -y omo-memory recent --limit 5
 npx -y omo-memory recall --query "why did we choose sqlite" --limit 5
 npx -y omo-memory mcp
@@ -119,6 +129,65 @@ Initial stdio MCP tools:
 - `memory_write_handoff`
 - `memory_export`
 - `memory_purge`
+- `memory_global_scan`
+- `memory_global_migrate`
+- `memory_global_list`
+- `memory_ontology_candidates`
+- `memory_ontology_extract`
+- `memory_ontology_score`
+- `memory_ontology_promote`
+- `memory_ontology_demote`
+- `memory_ontology_supersede`
+- `memory_ontology_recall`
+
+## Second-brain layer
+
+The base ledger remains project-local and chronological: sessions, events, handoffs, and explicit recall. The second-brain layer adds deterministic ontology tables and lifecycle commands:
+
+- Global migration copies existing local `.omo/memory/state.sqlite` databases into one global SQLite store with source provenance and an aggregate OMO schema view. It does not delete or rewrite local project ledgers.
+- Concept extraction turns concise event summaries into vocabulary candidates and reference counts.
+- Retention scoring classifies memory as `forget`, `temporary`, `working`, `durable`, or `permanent`; manual pins force `permanent`.
+- Durable memories can be promoted, demoted, superseded, and recalled through CLI or MCP.
+- `omo-memory graph tui` opens an OpenTUI ontology graph viewer for concepts, relations, retention class, and detail panes. This command needs `bun` on `PATH` because OpenTUI's terminal renderer uses Bun native FFI; the rest of the CLI runs on Node.
+
+Retention classes:
+
+- `forget`: low-value or stale one-off context that can be dropped.
+- `temporary`: short-term context useful during a narrow task.
+- `working`: active project memory worth keeping across the current iteration.
+- `durable`: cross-session knowledge that should survive normal decay.
+- `permanent`: manually pinned or high-score knowledge; only explicit demote, supersede, or purge should change it.
+
+Ontology lifecycle commands:
+
+```sh
+omo-memory ontology candidates
+omo-memory ontology score
+omo-memory ontology promote --concept linaforge --summary "Linaforge is an active game-engine project"
+omo-memory ontology recall --query "linaforge"
+omo-memory ontology demote --id <durable-id>
+omo-memory ontology supersede --id <durable-id> --summary "Updated durable memory"
+```
+
+Global second-brain flow:
+
+```sh
+omo-memory global scan --root /Users/ilseoblee/workspace
+omo-memory global migrate --root /Users/ilseoblee/workspace --global-db ~/.omo/memory/global.sqlite
+OMO_MEMORY_DB=~/.omo/memory/global.sqlite omo-memory ontology candidates
+OMO_MEMORY_DB=~/.omo/memory/global.sqlite omo-memory ontology score
+bun --version
+omo-memory graph tui --db ~/.omo/memory/global.sqlite --query linaforge
+```
+
+OpenTUI graph controls:
+
+- `q`: quit.
+- `Up` / `Down`: move selected concept.
+- `Tab`: move to the next concept.
+- `/` or `f`: focus filter input when supported by the terminal runtime.
+
+The graph is terminal-native. It does not require a browser, web server, cloud service, or embeddings, but it does require Bun for the OpenTUI renderer.
 
 ## Non-goals for MVP
 
