@@ -1,4 +1,5 @@
 import { migrate, openMemoryDb } from "./memoryDb.js";
+import { readGraphEdges } from "./ontologyGraphEdges.js";
 import { redactSecrets, sanitizeGitRemote } from "./privacy.js";
 
 export type OntologyGraphInput = {
@@ -24,6 +25,8 @@ export type OntologyGraphNode = {
   readonly scoreLabel: string;
   readonly refCount: number;
   readonly projectSpread: number;
+  readonly firstSeen: string | null;
+  readonly lastSeen: string | null;
   readonly project: OntologyGraphProject;
   readonly selected: boolean;
 };
@@ -78,17 +81,6 @@ type ConceptRow = {
   readonly gitRemote: string | null;
 };
 
-type RelationRow = {
-  readonly id: string;
-  readonly projectId: string;
-  readonly sourceId: string;
-  readonly targetId: string;
-  readonly relation: string;
-  readonly weight: number;
-  readonly repoRoot: string;
-  readonly gitRemote: string | null;
-};
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object";
 }
@@ -117,7 +109,7 @@ function numberValue(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : Number(value ?? 0);
 }
 
-function projectFrom(row: ConceptRow | RelationRow): OntologyGraphProject {
+function projectFrom(row: ConceptRow): OntologyGraphProject {
   return {
     id: row.projectId,
     repoRoot: redactSecrets(row.repoRoot),
@@ -147,22 +139,6 @@ function parseConceptRow(value: unknown): ConceptRow {
   };
 }
 
-function parseRelationRow(value: unknown): RelationRow {
-  if (!isRecord(value)) {
-    throw new Error("invalid relation row");
-  }
-  return {
-    id: text(value["id"]),
-    projectId: text(value["projectId"]),
-    sourceId: text(value["sourceId"]),
-    targetId: text(value["targetId"]),
-    relation: text(value["relation"]),
-    weight: numberValue(value["weight"]),
-    repoRoot: text(value["repoRoot"]),
-    gitRemote: nullableText(value["gitRemote"]),
-  };
-}
-
 function matchesQuery(row: ConceptRow, query: string): boolean {
   const haystack = `${row.label}\n${row.description ?? ""}\n${row.aliases.join("\n")}`.toLowerCase();
   return haystack.includes(query);
@@ -182,6 +158,8 @@ function toNode(row: ConceptRow, selectedId: string | null): OntologyGraphNode {
     scoreLabel: `${score} ${retentionClass}`,
     refCount: Math.round(row.refCount),
     projectSpread: Math.round(row.projectSpread),
+    firstSeen: row.firstSeen,
+    lastSeen: row.lastSeen,
     project: projectFrom(row),
     selected: selectedId === row.id,
   };
@@ -203,20 +181,6 @@ function toDetail(row: ConceptRow): OntologyGraphDetail {
     projectSpread: Math.round(row.projectSpread),
     firstSeen: row.firstSeen,
     lastSeen: row.lastSeen,
-    project: projectFrom(row),
-  };
-}
-
-function toEdge(row: RelationRow): OntologyGraphEdge {
-  const weight = Number(row.weight.toFixed(2));
-  const relation = redactSecrets(row.relation);
-  return {
-    id: row.id,
-    sourceId: row.sourceId,
-    targetId: row.targetId,
-    relation,
-    label: `${relation} ${weight.toFixed(2)}`,
-    weight,
     project: projectFrom(row),
   };
 }
@@ -245,21 +209,9 @@ export function projectOntologyGraph(options: OntologyGraphInput): OntologyGraph
     const selectedId = options.selectedId && conceptIds.has(options.selectedId) ? options.selectedId : (conceptRows[0]?.id ?? null);
     const nodes = conceptRows.map((row) => toNode(row, selectedId));
     const selectedRow = selectedId === null ? undefined : conceptRows.find((row) => row.id === selectedId);
-    const relationRows = db
-      .prepare(`
-        SELECT r.id, r.project_id AS projectId, r.source_id AS sourceId, r.target_id AS targetId,
-          r.relation, COALESCE(r.weight, 1) AS weight, p.repo_root AS repoRoot, p.git_remote AS gitRemote
-        FROM relations r
-        JOIN projects p ON p.id = r.project_id
-        WHERE r.source_type = 'concept' AND r.target_type = 'concept' AND r.valid_to IS NULL
-        ORDER BY lower(r.relation) ASC, r.id ASC
-      `)
-      .all()
-      .map(parseRelationRow)
-      .filter((row) => conceptIds.has(row.sourceId) && conceptIds.has(row.targetId));
     return {
       nodes,
-      edges: relationRows.map(toEdge),
+      edges: readGraphEdges(db, conceptIds),
       detail: selectedRow === undefined ? null : toDetail(selectedRow),
       message: nodes.length === 0 ? "No ontology graph data is available yet." : null,
     };

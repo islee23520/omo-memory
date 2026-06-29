@@ -118,14 +118,14 @@ During the session, hooks should write concise user-action summaries, task state
 }
 ```
 
-This package is the local MCP-to-SQLite router. It does not scrape host transcripts or centralize cloud state. Hosts and adapters must call the MCP tools at their own lifecycle points.
+This package is the local MCP-to-SQLite router. It does not scrape host transcripts, store assistant output, or centralize cloud state. Hosts and adapters must call the MCP tools at their own lifecycle points.
 
 Retrieval is opt-in or intent-gated:
 
 - Use `memory_recent_events` only when the user explicitly asks for recent OMO Memory context.
 - Use `memory_recall_events` when the current user input has a concrete query that can be matched to recorded summaries, decisions, or evidence.
 - Do not automatically attach the last session to every user prompt.
-- Do not store raw user prompts by default; record concise, redacted action summaries.
+- To preserve user intent across sessions, adapters may invoke the packaged `scripts/omo-memory-user-prompt.mjs` UserPromptSubmit helper with the hook payload on stdin. The helper records only the current user prompt as a redacted `user_prompt` event and ignores assistant output.
 
 Use these tools:
 

@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { BoxRenderable, createCliRenderer, TextRenderable } from "@opentui/core";
+import { classCode, graphContent } from "./graphTuiCanvas.js";
 import type { OntologyGraph, OntologyGraphDetail, OntologyGraphNode } from "./ontologyGraph.js";
 
 export type GraphTuiOptions = {
@@ -101,7 +102,7 @@ export async function runGraphTui(options: GraphTuiOptions): Promise<void> {
     graph = loadGraph(state);
     state = { ...state, selectedId: graph.detail?.id ?? null };
     title.content = titleText(graph, state.options.query);
-    nodesText.content = nodesContent(graph);
+    nodesText.content = graphContent(graph);
     detailText.content = detailContent(graph);
     footer.content = "q quit | ArrowUp/ArrowDown/Tab select | Legend: D durable, W working, T temporary, E ephemeral";
     renderer.requestRender();
@@ -159,16 +160,7 @@ async function createGraphSnapshot(options: GraphTuiOptions): Promise<GraphSnaps
     dbPath: options.dbPath,
     ...(options.query === undefined ? {} : { query: options.query }),
   });
-  const details = graph.nodes
-    .map(
-      (node) =>
-        projectOntologyGraph({
-          dbPath: options.dbPath,
-          ...(options.query === undefined ? {} : { query: options.query }),
-          selectedId: node.id,
-        }).detail,
-    )
-    .filter((detail): detail is OntologyGraphDetail => detail !== null);
+  const details = graph.detail === null ? [] : [graph.detail];
   return { graph, details };
 }
 
@@ -190,7 +182,9 @@ function isGraphSnapshot(value: unknown): value is GraphSnapshot {
 
 function loadGraph(state: GraphTuiState): OntologyGraph {
   const selectedId = state.selectedId ?? state.snapshot.graph.detail?.id ?? state.snapshot.graph.nodes[0]?.id ?? null;
-  const detail = selectedId === null ? state.snapshot.graph.detail : (state.snapshot.details.find((item) => item.id === selectedId) ?? null);
+  const selectedNode = selectedId === null ? undefined : state.snapshot.graph.nodes.find((node) => node.id === selectedId);
+  const detail =
+    selectedId === null ? state.snapshot.graph.detail : (state.snapshot.details.find((item) => item.id === selectedId) ?? nodeDetail(selectedNode) ?? null);
   return {
     ...state.snapshot.graph,
     nodes: state.snapshot.graph.nodes.map((node) => ({ ...node, selected: node.id === selectedId })),
@@ -198,15 +192,28 @@ function loadGraph(state: GraphTuiState): OntologyGraph {
   };
 }
 
+function nodeDetail(node: OntologyGraphNode | undefined): OntologyGraphDetail | null {
+  if (node === undefined) return null;
+  return {
+    id: node.id,
+    label: node.label,
+    kind: node.kind,
+    description: node.description,
+    aliases: node.aliases,
+    retentionClass: node.retentionClass,
+    score: node.score,
+    scoreLabel: node.scoreLabel,
+    refCount: node.refCount,
+    projectSpread: node.projectSpread,
+    firstSeen: node.firstSeen,
+    lastSeen: node.lastSeen,
+    project: node.project,
+  };
+}
+
 function titleText(graph: OntologyGraph, query: string | undefined): string {
   const queryLabel = query === undefined ? "all concepts" : `query "${query}"`;
   return `OMO Ontology Graph - ${queryLabel} - ${graph.nodes.length} nodes / ${graph.edges.length} edges`;
-}
-
-function nodesContent(graph: OntologyGraph): string {
-  if (graph.nodes.length === 0) return graph.message ?? "No ontology graph data is available yet.";
-  const edges = graph.edges.map((edge) => `  ${edge.sourceId} -> ${edge.targetId} [${edge.label}]`);
-  return [...graph.nodes.map((node) => nodeLine(node)), "", "Relations", ...(edges.length === 0 ? ["  none in current filter"] : edges)].join("\n");
 }
 
 function detailContent(graph: OntologyGraph): string {
@@ -236,8 +243,8 @@ function writeCaptureFrame(graph: OntologyGraph, query: string | undefined): voi
     [
       titleText(graph, query),
       "",
-      "Nodes",
-      nodesContent(graph),
+      "Graph",
+      graphContent(graph),
       "",
       "Detail",
       detailContent(graph),
@@ -246,19 +253,6 @@ function writeCaptureFrame(graph: OntologyGraph, query: string | undefined): voi
       "",
     ].join("\n"),
   );
-}
-
-function nodeLine(node: OntologyGraphNode): string {
-  const marker = node.selected ? ">" : " ";
-  return `${marker} ${classCode(node.retentionClass)} ${node.label} (${node.kind}, ${node.scoreLabel}, refs ${node.refCount})`;
-}
-
-function classCode(retentionClass: string): string {
-  const normalized = retentionClass.toLowerCase();
-  if (normalized === "durable") return "D";
-  if (normalized === "temporary") return "T";
-  if (normalized === "ephemeral") return "E";
-  return "W";
 }
 
 function nextSelectedId(nodes: readonly OntologyGraphNode[], selectedId: string | null, keyName: string): string | null {

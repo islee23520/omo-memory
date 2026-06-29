@@ -164,7 +164,7 @@ try {
     name: "happy",
     dbPath,
     query: "ontology",
-    expected: ["OMO Ontology Graph", "Ontology Graph", "Ontology Viewer", "Legend: D durable", "Detail", "Retention:"],
+    expected: ["OMO Ontology Graph", "Graph", "●Ontology D", "DOntology G", "WOntology V", "------", "Legend: D durable", "Detail", "Retention:"],
   });
 
   const emptyDbPath = join(tempRoot, "empty.sqlite");

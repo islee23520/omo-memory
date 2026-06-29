@@ -1,11 +1,12 @@
 {
   "name": "omo-memory",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "description": "Host-neutral local SQLite memory and session ledger for OMO adapters, exposed through CLI and MCP.",
   "type": "module",
   "files": [
     "dist",
     "docs",
+    "scripts/omo-memory-user-prompt.mjs",
     "README.md"
   ],
   "bin": {
@@ -32,9 +33,10 @@
     "start": "node dist/cli.js",
     "prepack": "npm run build",
     "presmoke": "npm run build",
-    "smoke": "npm run smoke:cli && npm run smoke:mcp",
+    "smoke": "npm run smoke:cli && npm run smoke:mcp && npm run smoke:hook",
     "smoke:cli": "node scripts/smoke-cli.mjs",
     "smoke:mcp": "node scripts/smoke-mcp.mjs",
+    "smoke:hook": "node scripts/verify-user-prompt-hook.mjs",
     "mcp": "node dist/cli.js mcp",
     "issue:epic": "node scripts/create-epic-issue.mjs"
   },

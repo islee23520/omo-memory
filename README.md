@@ -106,6 +106,7 @@ The response contains a new `sessionId` and project metadata only. It deliberate
 ```
 
 This is local routing, not transcript scraping. OMO Memory does not automatically read full Codex or Grok transcripts. Hooks should record concise user actions, decisions, QA evidence, and handoffs; they should retrieve memory only when the user explicitly asks for OMO Memory or when the current user input can be matched to recorded intent.
+The packaged `scripts/omo-memory-user-prompt.mjs` helper is the supported UserPromptSubmit hook target for adapters that can invoke a command with the hook payload on stdin. It records only the current user prompt as a redacted `user_prompt` event, ignores assistant output, and exits successfully without blocking the host when OMO Memory is unavailable.
 
 Use explicit retrieval for memory reads:
 

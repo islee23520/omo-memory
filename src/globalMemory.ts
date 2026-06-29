@@ -50,6 +50,22 @@ type SourceScan = { readonly kind: "candidate"; readonly candidate: MemoryDbCand
 
 const STATE_DB_SUFFIX = join(".omo", "memory", "state.sqlite");
 const REQUIRED_TABLES = ["schema_meta", "projects", "events"] as const;
+const PRUNED_DIR_NAMES = new Set([
+  ".cache",
+  ".git",
+  ".hg",
+  ".next",
+  ".pnpm-store",
+  ".turbo",
+  ".venv",
+  ".yarn",
+  "Library",
+  "build",
+  "dist",
+  "node_modules",
+  "target",
+  "vendor",
+]);
 
 export function initGlobalMemory(globalDbPath: string): GlobalMemoryInitResult {
   mkdirSync(dirname(globalDbPath), { recursive: true });
@@ -149,12 +165,17 @@ function findStateDbs(rootPath: string): readonly string[] {
     }
     for (const entry of entries) {
       const entryPath = join(path, entry.name);
-      if (entry.isDirectory()) visit(entryPath);
+      if (entry.isDirectory() && shouldVisitDirectory(entry.name, entryPath)) visit(entryPath);
       else if (entry.isFile() && entryPath.endsWith(STATE_DB_SUFFIX)) dbPaths.push(entryPath);
     }
   };
   visit(rootPath);
   return dbPaths.sort();
+}
+
+function shouldVisitDirectory(name: string, path: string): boolean {
+  if (path.endsWith(join(".omo", "memory"))) return true;
+  return !PRUNED_DIR_NAMES.has(name);
 }
 
 function scanSourceDb(dbPath: string): SourceScan {
