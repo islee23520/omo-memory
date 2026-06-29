@@ -150,6 +150,8 @@ Use these tools:
 - `memory_ontology_supersede`
 - `memory_ontology_recall`
 
+CLI updates: normal CLI commands automatically launch a quiet background `npm install -g omo-memory@latest` at most once per day. MCP startup intentionally does not auto-update because stdout/stderr must remain reserved for the protocol. Hosts that need pinned installs should set `OMO_MEMORY_AUTO_UPDATE=0` in the CLI environment.
+
 Global migration is copy/import only. Adapters may scan for existing project-local `.omo/memory/state.sqlite` databases and import them into a user-selected global SQLite file, but they must preserve source DBs and retain source provenance in the global store.
 
 Global migration also materializes an aggregate OMO schema view inside the global SQLite file. This lets existing ontology extraction, retention scoring, recall, and OpenTUI graph code operate on integrated cross-project events while `global_*` tables retain source database provenance.

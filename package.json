@@ -1,6 +1,6 @@
 {
   "name": "omo-memory",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "Host-neutral local SQLite memory and session ledger for OMO adapters, exposed through CLI and MCP.",
   "type": "module",
   "files": [

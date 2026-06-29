@@ -11,8 +11,9 @@ import { seedOntologyFixture } from "./smoke-cli-fixtures.mjs";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const tempDir = mkdtempSync(join(tmpdir(), "omo-memory-cli-"));
 const dbPath = join(tempDir, "state.sqlite");
-const env = { ...process.env, OMO_MEMORY_DB: dbPath };
+const env = { ...process.env, OMO_MEMORY_AUTO_UPDATE: "0", OMO_MEMORY_DB: dbPath };
 const envProjectDefault = { ...process.env };
+envProjectDefault.OMO_MEMORY_AUTO_UPDATE = "0";
 delete envProjectDefault.OMO_MEMORY_DB;
 
 function runCli(args, cwd = root) {

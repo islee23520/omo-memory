@@ -39,6 +39,7 @@ After the package is published to npm, use the same package for CLI and MCP:
 
 ```sh
 npx -y omo-memory init
+npx -y omo-memory update
 npx -y omo-memory global scan --root .
 npx -y omo-memory global migrate --root . --global-db ~/.omo/memory/global.sqlite
 npx -y omo-memory session bootstrap --host codex --adapter lazycodex --limit 5
@@ -139,6 +140,22 @@ Initial stdio MCP tools:
 - `memory_ontology_demote`
 - `memory_ontology_supersede`
 - `memory_ontology_recall`
+
+## Updates
+
+Installed CLI commands automatically launch a quiet background `npm install -g omo-memory@latest` at most once per day. MCP startup does not run the updater, so stdio handshakes stay clean.
+
+Manual update:
+
+```sh
+omo-memory update
+```
+
+Disable automatic update for pinned environments:
+
+```sh
+OMO_MEMORY_AUTO_UPDATE=0 omo-memory doctor
+```
 
 ## Second-brain layer
 

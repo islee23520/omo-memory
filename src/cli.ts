@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
+import { maybeRunAutoUpdate, runAutoUpdate } from "./autoUpdate.js";
 import { applyConceptExtraction } from "./conceptExtraction.js";
 import { migrateToGlobalMemory, scanForMemoryDbs } from "./globalMemory.js";
 import { runGraphTui } from "./graphTui.js";
@@ -29,6 +30,13 @@ async function main(argv: readonly string[]): Promise<void> {
     await runMcpServer();
     return;
   }
+
+  const currentVersion = readPackageVersion();
+  if (command === "update") {
+    process.stdout.write(`${JSON.stringify(runAutoUpdate(currentVersion), null, 2)}\n`);
+    return;
+  }
+  maybeRunAutoUpdate(currentVersion);
 
   if (command === "graph" && subcommand === "tui") {
     const query = readFlag(rest, "--query");
@@ -233,8 +241,19 @@ function fail(message: string): never {
 
 function printHelp(): void {
   process.stdout.write(
-    `OMO Memory\n\nCommands:\n  omo-memory init\n  omo-memory doctor\n  omo-memory export\n  omo-memory purge --yes\n  omo-memory global scan --root <path> [--json]\n  omo-memory global migrate --root <path> --global-db <path> [--json]\n  omo-memory ontology candidates\n  omo-memory ontology score\n  omo-memory ontology promote --concept <label|id> [--summary <text>] [--body <text>]\n  omo-memory ontology demote --id <durable-id>\n  omo-memory ontology supersede --id <durable-id> [--summary <text>]\n  omo-memory ontology recall --query <text> [--limit <n>]\n  omo-memory session start --host <codex|opencode|grok|unknown> --adapter <name>\n  omo-memory session bootstrap --host <codex|opencode|grok|unknown> --adapter <name> [--limit <n>]\n  omo-memory event record --type <type> --summary <text> [--session-id <id>]\n  omo-memory recent [--limit <n>]\n  omo-memory recall --query <text> [--limit <n>]\n  omo-memory handoff write (--summary <text> | --summary-file <path>) [--session-id <id>]\n  omo-memory graph tui [--db <path>] [--query <text>]  (requires Bun on PATH)\n  omo-memory mcp\n`,
+    `OMO Memory\n\nCommands:\n  omo-memory init\n  omo-memory doctor\n  omo-memory update\n  omo-memory export\n  omo-memory purge --yes\n  omo-memory global scan --root <path> [--json]\n  omo-memory global migrate --root <path> --global-db <path> [--json]\n  omo-memory ontology candidates\n  omo-memory ontology score\n  omo-memory ontology promote --concept <label|id> [--summary <text>] [--body <text>]\n  omo-memory ontology demote --id <durable-id>\n  omo-memory ontology supersede --id <durable-id> [--summary <text>]\n  omo-memory ontology recall --query <text> [--limit <n>]\n  omo-memory session start --host <codex|opencode|grok|unknown> --adapter <name>\n  omo-memory session bootstrap --host <codex|opencode|grok|unknown> --adapter <name> [--limit <n>]\n  omo-memory event record --type <type> --summary <text> [--session-id <id>]\n  omo-memory recent [--limit <n>]\n  omo-memory recall --query <text> [--limit <n>]\n  omo-memory handoff write (--summary <text> | --summary-file <path>) [--session-id <id>]\n  omo-memory graph tui [--db <path>] [--query <text>]  (requires Bun on PATH)\n  omo-memory mcp\n`,
   );
+}
+
+function readPackageVersion(): string {
+  const rawPackage: unknown = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  if (!isObject(rawPackage)) return "0.0.0";
+  const version = rawPackage["version"];
+  return typeof version === "string" && version.length > 0 ? version : "0.0.0";
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object";
 }
 
 main(process.argv.slice(2)).catch((error: unknown) => {
