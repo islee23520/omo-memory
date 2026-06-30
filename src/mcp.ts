@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { registerGlobalOntologyTools } from "./mcpOntologyTools.js";
+import { registerGlobalTools } from "./mcpGlobalTools.js";
 import { bootstrapSession, exportMemory, PurgeConfirmationError, purgeMemory, recentEvents, recordEvent, startSession, writeHandoff } from "./memory.js";
 import { initMemory } from "./memoryDb.js";
 import { recallEvents } from "./memoryRecall.js";
@@ -63,7 +63,7 @@ export async function runMcpServer(): Promise<void> {
     },
   );
 
-  registerGlobalOntologyTools(server);
+  registerGlobalTools(server);
 
   server.registerTool(
     "memory_start_session",

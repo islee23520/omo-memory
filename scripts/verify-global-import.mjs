@@ -8,7 +8,7 @@ import Database from "better-sqlite3";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = dirname(__dirname);
 const distGlobalMemory = join(root, "dist", "globalMemory.js");
-const evidencePath = join(root, ".omo", "evidence", "omo-memory-second-brain-retention", "task-5-global-index.txt");
+const evidencePath = join(root, ".omo", "evidence", "omo-memory-core-ledger", "global-import.txt");
 
 function fail(message) {
   throw new Error(`VERIFY FAIL: ${message}`);
@@ -155,6 +155,7 @@ async function main() {
       if (JSON.stringify(countRows(path)) !== JSON.stringify(beforeCounts.get(path))) fail(`source row counts changed for ${path}`);
     }
 
+    mkdirSync(dirname(evidencePath), { recursive: true });
     appendFileSync(
       evidencePath,
       [

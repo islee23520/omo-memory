@@ -6,7 +6,6 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
-import { seedOntologyFixture } from "./smoke-cli-fixtures.mjs";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const tempDir = mkdtempSync(join(tmpdir(), "omo-memory-cli-"));
@@ -87,6 +86,9 @@ try {
   const globalMigrate = requireOk("global migrate", runCli(["global", "migrate", "--root", tempDir, "--global-db", globalDbPath, "--json"]));
   if (globalMigrate.after?.sources < 1) throw new Error("global migrate imported no sources");
   pass("global migrate");
+  const globalList = requireOk("global list", runCli(["global", "list", "--global-db", globalDbPath, "--json"]));
+  if (typeof globalList.counts?.sources !== "number" || !Array.isArray(globalList.sources)) throw new Error("global list returned malformed result");
+  pass("global list");
 
   const tokenRemoteRepo = mkdtempSync(join(tempDir, "token-remote-"));
   runGit(["init"], tokenRemoteRepo);
@@ -145,7 +147,7 @@ try {
       "--type",
       "user_action",
       "--summary",
-      "CLI smoke ontology lifecycle token=sk-test1234567890",
+      "CLI smoke event ledger token=sk-test1234567890",
       "--payload-json",
       '{"api_key":"secret123456"}',
       "--session-id",
@@ -155,51 +157,20 @@ try {
   if (typeof event.eventId !== "string" || event.eventId.length === 0) throw new Error("event record did not return eventId");
   pass("event record");
 
-  requireOk(
-    "ontology seed event 2",
-    runCli(["event", "record", "--type", "decision", "--summary", "CLI ontology lifecycle keeps local memory durable", "--session-id", session.sessionId]),
-  );
-  requireOk(
-    "ontology seed event 3",
-    runCli(["event", "record", "--type", "qa", "--summary", "Verify ontology lifecycle recall for durable memory", "--session-id", session.sessionId]),
-  );
-
   const help = spawnSync(process.execPath, [join(root, "dist", "cli.js"), "help"], { cwd: root, env, encoding: "utf8" });
-  if (help.status !== 0 || !help.stdout.includes("ontology promote") || !help.stdout.includes("global migrate"))
-    throw new Error("help did not list lifecycle commands");
+  if (help.status !== 0 || !help.stdout.includes("global migrate")) throw new Error("help did not list retained lifecycle commands");
+  if (help.stdout.includes("ontology") || help.stdout.includes("graph tui")) throw new Error("help listed removed ontology/graph commands");
   pass("help lifecycle commands");
 
-  const candidates = requireOk("ontology candidates", runCli(["ontology", "candidates"]));
-  const ontologyConcept = candidates.concepts.find((concept) => concept.label === "ontology");
-  if (!ontologyConcept || ontologyConcept.refCount < 2) throw new Error("ontology candidates did not extract repeated ontology concept");
-  const candidatesAgain = requireOk("ontology candidates idempotent", runCli(["ontology", "candidates"]));
-  const ontologyAgain = candidatesAgain.concepts.find((concept) => concept.label === "ontology");
-  if (!ontologyAgain || ontologyAgain.refCount !== ontologyConcept.refCount || candidatesAgain.references !== candidates.references) {
-    throw new Error("ontology candidates changed reference counts on repeat run");
+  const removedOntology = runCli(["ontology", "candidates"]);
+  if (removedOntology.status === 0 || !removedOntology.stdout.includes("unknown command: ontology candidates")) {
+    throw new Error(`ontology command was not removed: ${removedOntology.stdout}`);
   }
-  pass("ontology candidates");
-
-  const score = requireOk("ontology score", runCli(["ontology", "score"]));
-  if (score.scannedConcepts < 1) throw new Error("ontology score did not scan concepts");
-  pass("ontology score");
-
-  const promoted = requireOk("ontology promote", runCli(["ontology", "promote", "--concept", "ontology", "--body", "promote body Bearer abcdef123456"]));
-  if (typeof promoted.durableMemory?.id !== "string" || JSON.stringify(promoted).includes("abcdef123456"))
-    throw new Error("ontology promote failed or leaked secret");
-  pass("ontology promote");
-
-  const ontologyRecall = requireOk("ontology recall", runCli(["ontology", "recall", "--query", "ontology", "--limit", "5"]));
-  if (!Array.isArray(ontologyRecall.durableMemories) || !ontologyRecall.durableMemories.some((item) => item.id === promoted.durableMemory.id))
-    throw new Error("ontology recall missed promoted durable memory");
-  pass("ontology recall");
-
-  const demoted = requireOk("ontology demote", runCli(["ontology", "demote", "--id", promoted.durableMemory.id]));
-  if (demoted.durableMemory?.retentionClass !== "temporary") throw new Error("ontology demote did not set temporary retention");
-  pass("ontology demote");
-
-  const superseded = requireOk("ontology supersede", runCli(["ontology", "supersede", "--id", promoted.durableMemory.id, "--summary", "ontology successor"]));
-  if (typeof superseded.supersedingId !== "string") throw new Error("ontology supersede did not return supersedingId");
-  pass("ontology supersede");
+  const removedGraph = runCli(["graph", "tui"]);
+  if (removedGraph.status === 0 || !removedGraph.stdout.includes("unknown command: graph tui")) {
+    throw new Error(`graph command was not removed: ${removedGraph.stdout}`);
+  }
+  pass("removed ontology/graph commands");
 
   const handoff = requireOk(
     "handoff write",
@@ -207,9 +178,6 @@ try {
   );
   if (typeof handoff.handoffId !== "string" || handoff.handoffId.length === 0) throw new Error("handoff write did not return handoffId");
   pass("handoff write");
-
-  seedOntologyFixture(dbPath, event.project.id, event.eventId);
-  pass("ontology seed");
 
   const recent = requireOk("recent", runCli(["recent", "--limit", "5"]));
   if (!Array.isArray(recent.events) || !recent.events.some((item) => item.summary.includes("[REDACTED]")))
@@ -231,17 +199,9 @@ try {
 
   const exported = requireOk("export", runCli(["export"]));
   if (!Array.isArray(exported.events) || !JSON.stringify(exported).includes("[REDACTED]")) throw new Error("export did not include redacted data");
-  if (
-    !Array.isArray(exported.concepts) ||
-    !exported.concepts.some((item) => item.id === "concept-smoke") ||
-    !Array.isArray(exported.relations) ||
-    !exported.relations.some((item) => item.id === "relation-smoke") ||
-    !Array.isArray(exported.durableMemories) ||
-    !exported.durableMemories.some((item) => item.id === "memory-smoke") ||
-    !Array.isArray(exported.decisionRecords) ||
-    !exported.decisionRecords.some((item) => item.id === "decision-smoke")
-  )
-    throw new Error("export did not include ontology rows");
+  if (exported.concepts.length !== 0 || exported.relations.length !== 0 || exported.durableMemories.length !== 0 || exported.decisionRecords.length !== 0) {
+    throw new Error("fresh export included ontology rows");
+  }
   pass("export");
 
   const purge = requireOk("purge", runCli(["purge", "--yes"]));
@@ -249,10 +209,10 @@ try {
     purge.deleted?.events < 1 ||
     purge.deleted?.handoffs < 1 ||
     purge.deleted?.sessions < 1 ||
-    purge.deleted?.concepts < 1 ||
-    purge.deleted?.relations < 1 ||
-    purge.deleted?.durableMemories < 1 ||
-    purge.deleted?.decisionRecords < 1
+    purge.deleted?.concepts !== 0 ||
+    purge.deleted?.relations !== 0 ||
+    purge.deleted?.durableMemories !== 0 ||
+    purge.deleted?.decisionRecords !== 0
   )
     throw new Error("purge did not delete expected rows");
   pass("purge");

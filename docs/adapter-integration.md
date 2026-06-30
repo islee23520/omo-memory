@@ -1,6 +1,6 @@
 # Adapter Integration
 
-OMO Memory is the shared local work ledger for OMO adapters. It is host-neutral: lazycodex, omo-on-opencode, lfg, and future adapters all write summaries, decisions, QA evidence, task state, and handoffs to the same project-local SQLite database at `<project-root>/.omo/memory/state.sqlite` by default.
+OMO Memory is the shared local session/work/event ledger for OMO adapters. It is host-neutral: lazycodex, omo-on-opencode, lfg, and future adapters all write summaries, decisions, QA evidence, task state, and handoffs to the same project-local SQLite database at `<project-root>/.omo/memory/state.sqlite` by default.
 
 No full transcript capture by default. Do not store API keys, tokens, `.env` contents, auth files, raw tool logs, auth headers, cookies, or any other secret-bearing material.
 
@@ -118,7 +118,7 @@ During the session, hooks should write concise user-action summaries, task state
 }
 ```
 
-This package is the local MCP-to-SQLite router. It does not scrape host transcripts, store assistant output, or centralize cloud state. Hosts and adapters must call the MCP tools at their own lifecycle points.
+This package is the local MCP-to-SQLite router. It does not scrape host transcripts, store assistant output, or centralize cloud state. Hosts and adapters must call the MCP tools at their own integration points.
 
 Retrieval is opt-in or intent-gated:
 
@@ -142,51 +142,28 @@ Use these tools:
 - `memory_global_scan`
 - `memory_global_migrate`
 - `memory_global_list`
-- `memory_ontology_candidates`
-- `memory_ontology_extract`
-- `memory_ontology_score`
-- `memory_ontology_promote`
-- `memory_ontology_demote`
-- `memory_ontology_supersede`
-- `memory_ontology_recall`
+
 
 CLI updates: normal CLI commands automatically launch a quiet background `npm install -g omo-memory@latest` at most once per day. MCP startup intentionally does not auto-update because stdout/stderr must remain reserved for the protocol. Hosts that need pinned installs should set `OMO_MEMORY_AUTO_UPDATE=0` in the CLI environment.
 
-Global migration is copy/import only. Adapters may scan for existing project-local `.omo/memory/state.sqlite` databases and import them into a user-selected global SQLite file, but they must preserve source DBs and retain source provenance in the global store.
+Global migration is copy/import only. Adapters may scan for existing project-local `.omo/memory/state.sqlite` databases and import their event/session/handoff ledgers into a user-selected global SQLite file, but they must preserve source DBs and retain source provenance in the global store.
 
-Global migration also materializes an aggregate OMO schema view inside the global SQLite file. This lets existing ontology extraction, retention scoring, recall, and OpenTUI graph code operate on integrated cross-project events while `global_*` tables retain source database provenance.
+Global import is an event-log surface, not an ontology, graph, concept-extraction, retention-scoring, or curated durable-memory layer.
 
-Example global second-brain flow:
+Example global event import flow:
 
 ```sh
 omo-memory global scan --root /Users/ilseoblee/workspace
 omo-memory global migrate --root /Users/ilseoblee/workspace --global-db ~/.omo/memory/global.sqlite
-OMO_MEMORY_DB=~/.omo/memory/global.sqlite omo-memory ontology candidates
-OMO_MEMORY_DB=~/.omo/memory/global.sqlite omo-memory ontology score
-bun --version
-omo-memory graph tui --db ~/.omo/memory/global.sqlite --query linaforge
+omo-memory global list --global-db ~/.omo/memory/global.sqlite
+OMO_MEMORY_DB=~/.omo/memory/global.sqlite omo-memory recall --query linaforge
 ```
 
-`graph tui` requires `bun` on `PATH` for the OpenTUI terminal renderer. Other CLI and MCP commands run on Node.
+Unavailable surfaces:
 
-Lifecycle commands:
-
-- `memory_ontology_candidates`: derive candidate terms from concise summaries.
-- `memory_ontology_extract`: explicitly extract candidates from one summary/event.
-- `memory_ontology_score`: recompute deterministic scores and retention classes.
-- `memory_ontology_promote`: curate a concept into durable memory.
-- `memory_ontology_demote`: lower a durable memory's retention class.
-- `memory_ontology_supersede`: preserve the old memory and create a replacement.
-- `memory_ontology_recall`: retrieve ontology-backed memories only for an explicit query.
-
-OpenTUI graph controls:
-
-- `q`: quit.
-- `Up` / `Down`: move selected concept.
-- `Tab`: move to the next concept.
-- `/` or `f`: focus filter input when supported by the terminal runtime.
-
-The graph UI is local terminal UI. It does not require a browser, web server, cloud account, or vector service.
+- `memory_ontology_*` MCP tools are absent.
+- `omo-memory ontology ...` CLI commands are unknown.
+- `omo-memory graph tui` is unknown.
 
 Example session start:
 
@@ -218,59 +195,10 @@ Example QA evidence:
 - Do not read or record `.env`, auth files, tokens, cookies, API keys, bearer headers, or raw secret-bearing logs.
 - Store sanitized summaries and evidence references instead of full logs.
 - Host-specific values may appear only in small redacted metadata payloads and must not require schema branches.
-- Export and purge are explicit lifecycle commands; purge requires explicit confirmation.
+- Export and purge are explicit local data commands; purge requires explicit confirmation.
 
-## Ontology Schema Boundary
+## Ledger Boundary
 
-OMO Memory's chronological ledger remains authoritative: sessions, events, and handoffs record what happened in a project. The ontology schema is an additive layer for durable memory derived from that ledger:
+OMO Memory's chronological ledger is authoritative: sessions, events, and handoffs record what happened in a project. Adapters should write concise summaries and evidence references to that ledger, then use explicit `recent`, `recall`, `handoff`, `export`, `purge`, and global event import/list operations.
 
-- `concepts` stores vocabulary entries such as project terms, practices, tools, and recurring ideas.
-- `relations` stores typed links between concepts, decisions, events, sessions, and handoffs.
-- `durable_memories` stores approved long-term facts, preferences, and working rules.
-- `decision_records` stores important choices with rationale, evidence, status, reversibility, and provenance.
-
-Adapters must treat ontology rows as curated local memory, not as raw capture. Do not write full transcripts, raw logs, `.env` contents, auth files, cookies, bearer headers, or secret-bearing payloads into ontology tables. User-authored text must pass through the same redaction boundary used by event and handoff writes before it is promoted into durable memory.
-
-The ontology layer is intentionally not a new adapter surface by itself. CLI and MCP commands should continue to call shared core functions, and future concept/decision commands must not create host-specific schemas or side databases.
-
-## Retention Scoring Policy (Deterministic Contract)
-
-Retention classification is strictly deterministic. There is no ML, embeddings, or hidden model. A pure function maps explicit signals to a numeric score and then to one of five classes.
-
-Classes (in ascending durability):
-
-- `forget`: score < 30 (or after decay/contradiction). Safe to drop.
-- `temporary`: 30 <= score < 50. Short-term context only.
-- `working`: 50 <= score < 75. Active task/iteration memory.
-- `durable`: 75 <= score < 90. Cross-session value; survives typical decay.
-- `permanent`: score >= 90, or any manually pinned item. Manual pin is a hard override.
-
-Manual pin rule (critical): an item with `manualPin: true` is always classified `permanent` regardless of raw score, age, or frequency. Decay jobs and age-based expiration MUST NOT remove or downgrade pinned permanent memory; only explicit supersede/demote/purge may change it.
-
-### Score Formula (pure, exposed)
-
-Exported constants (see `src/retentionPolicy.ts`):
-
-- `RETENTION_CLASSES = ["forget", "temporary", "working", "durable", "permanent"] as const`
-- `RETENTION_THRESHOLDS = { forget: 0, temporary: 30, working: 50, durable: 75, permanent: 90 } as const`
-- `RETENTION_WEIGHTS = { frequency: 4.5, spread: 7, decision: 12, qa: 10, relation: 4, confidence: 10, recencyBase: 18, recencyPerDay: 0.55, agePerDay: 0.12, ageCap: 22, contradiction: 9 } as const`
-
-```
-score = clamp(
-  frequency * 4.5
-  + spread * 7
-  + decisionWeight * 12
-  + qaWeight * 10
-  + relationDegree * 4
-  + confidence * 10
-  + max(0, 18 - recencyDays * 0.55)
-  - min(22, ageDays * 0.12)
-  - contradictionCount * 9
-, 0, 110)
-```
-
-`computeRetentionScore(input)` returns the rounded integer. `classifyRetention(score, manualPin)` returns the class, applying the pin override first.
-
-Boundary cases (score, pin=false): 29→forget, 30→temporary, 49→temporary, 50→working, 74→working, 75→durable, 89→durable, 90→permanent. These are verified by the focused contract test.
-
-All scoring inputs are derived from ledger signals (event counts, last-seen deltas, project spread from index, decision/qa event types, explicit relation degree, stored confidence, manual pin flag, contradiction markers). No raw transcripts or secrets are inputs.
+OMO Memory does not provide automatic ontology extraction, graph visualization, retention scoring, durable-memory promotion, or OpenTUI workflows. Do not build adapter behavior that depends on those unavailable surfaces.

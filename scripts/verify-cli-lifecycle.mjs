@@ -4,11 +4,10 @@ import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import Database from "better-sqlite3";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const cli = join(root, "dist", "cli.js");
-const evidencePath = join(root, ".omo", "evidence", "omo-memory-second-brain-retention", "task-7-cli-lifecycle.txt");
+const evidencePath = join(root, ".omo", "evidence", "omo-memory-core-ledger", "task-7-cli-lifecycle.txt");
 
 function fail(message) {
   throw new Error(`VERIFY FAIL: ${message}`);
@@ -34,74 +33,131 @@ function jsonFail(label, result) {
   return parsed;
 }
 
-function durableCount(dbPath) {
-  const db = new Database(dbPath, { readonly: true, fileMustExist: true });
-  try {
-    return db.prepare("SELECT COUNT(*) AS count FROM durable_memories").get().count;
-  } finally {
-    db.close();
-  }
+function requireHelp(help, text) {
+  if (!help.includes(text)) fail(`help output missing ${text}`);
+}
+
+function rejectHelp(help, text) {
+  if (help.includes(text)) fail(`help output still lists removed surface ${text}`);
 }
 
 const tempRoot = mkdtempSync(join(tmpdir(), "omo-t7-cli-"));
 try {
   const workspace = join(tempRoot, "workspace");
   const globalDb = join(tempRoot, "global.sqlite");
+  const stateDb = join(workspace, ".omo", "memory", "state.sqlite");
+  const env = { ...process.env, OMO_MEMORY_DB: stateDb };
   const gitInit = spawnSync("git", ["init", workspace], { encoding: "utf8" });
   if (gitInit.status !== 0) fail(`git init failed: ${gitInit.stderr}`);
   writeFileSync(join(workspace, "dirty.txt"), "dirty_worktree fixture\n");
 
-  const help = runCli(["help"], workspace);
-  if (help.status !== 0 || !help.stdout.includes("ontology promote") || !help.stdout.includes("global migrate")) {
-    fail("help output does not list lifecycle commands");
+  const help = runCli(["help"], workspace, env);
+  if (help.status !== 0) fail(`help exited ${help.status}: ${help.stderr}`);
+  for (const text of [
+    "omo-memory init",
+    "omo-memory doctor",
+    "omo-memory export",
+    "omo-memory purge --yes",
+    "omo-memory global scan --root <path>",
+    "omo-memory global migrate --root <path> --global-db <path>",
+    "omo-memory global list --global-db <path>",
+    "omo-memory session start",
+    "omo-memory session bootstrap",
+    "omo-memory event record",
+    "omo-memory recent",
+    "omo-memory recall --query <text>",
+    "omo-memory handoff write",
+  ]) {
+    requireHelp(help.stdout, text);
+  }
+  rejectHelp(help.stdout, "ontology");
+  rejectHelp(help.stdout, "graph tui");
+
+  const init = jsonOk("init", runCli(["init"], workspace, env));
+  if (init.dbPath !== stateDb) fail(`init returned wrong db path: ${JSON.stringify(init)}`);
+  const doctor = jsonOk("doctor", runCli(["doctor"], workspace, env));
+  if (doctor.paths?.dbPath !== stateDb) fail(`doctor returned wrong db path: ${JSON.stringify(doctor)}`);
+
+  const session = jsonOk("session start", runCli(["session", "start", "--host", "codex", "--adapter", "core-ledger-cli"], workspace, env));
+  if (typeof session.sessionId !== "string") fail("session start did not return sessionId");
+  const bootstrap = jsonOk(
+    "session bootstrap",
+    runCli(["session", "bootstrap", "--host", "codex", "--adapter", "core-ledger-cli", "--limit", "5"], workspace, env),
+  );
+  if (typeof bootstrap.sessionId !== "string" || "recentEvents" in bootstrap) fail(`bootstrap returned unexpected shape: ${JSON.stringify(bootstrap)}`);
+
+  const eventOne = jsonOk(
+    "event record decision",
+    runCli(
+      ["event", "record", "--type", "decision", "--summary", "Core ledger records local session events", "--session-id", session.sessionId],
+      workspace,
+      env,
+    ),
+  );
+  const eventTwo = jsonOk(
+    "event record qa",
+    runCli(
+      [
+        "event",
+        "record",
+        "--type",
+        "qa",
+        "--summary",
+        "Core ledger redacts token=sk-test1234567890 during recall and export",
+        "--session-id",
+        session.sessionId,
+      ],
+      workspace,
+      env,
+    ),
+  );
+  if (typeof eventOne.eventId !== "string" || typeof eventTwo.eventId !== "string") fail("event record did not return event ids");
+
+  const handoff = jsonOk(
+    "handoff write",
+    runCli(["handoff", "write", "--summary", "Core ledger handoff summary with token=sk-test1234567890", "--session-id", session.sessionId], workspace, env),
+  );
+  if (typeof handoff.handoffId !== "string") fail("handoff write did not return handoffId");
+
+  const recent = jsonOk("recent", runCli(["recent", "--limit", "5"], workspace, env));
+  if (!Array.isArray(recent.events) || recent.events.length !== 2) fail(`recent returned wrong events: ${JSON.stringify(recent)}`);
+  if (JSON.stringify(recent).includes("sk-test1234567890") || !JSON.stringify(recent).includes("[REDACTED]")) fail("recent did not redact event secret");
+
+  const recall = jsonOk("recall", runCli(["recall", "--query", "core ledger", "--limit", "5"], workspace, env));
+  if (!Array.isArray(recall.events) || recall.events.length < 2) fail(`recall missed ledger events: ${JSON.stringify(recall)}`);
+  if (JSON.stringify(recall).includes("sk-test1234567890")) fail("recall leaked raw secret");
+
+  const exported = jsonOk("export", runCli(["export"], workspace, env));
+  if (exported.sessions.length !== 2 || exported.events.length !== 2 || exported.handoffs.length !== 1)
+    fail(`export counts mismatch: ${JSON.stringify(exported)}`);
+  if (JSON.stringify(exported).includes("sk-test1234567890")) fail("export leaked raw secret");
+
+  const scan = jsonOk("global scan", runCli(["global", "scan", "--root", tempRoot, "--json"], workspace, env));
+  if (!Array.isArray(scan.candidates) || scan.candidates.length !== 1) fail(`scan candidates mismatch: ${JSON.stringify(scan)}`);
+  const migrated = jsonOk("global migrate", runCli(["global", "migrate", "--root", tempRoot, "--global-db", globalDb, "--json"], workspace, env));
+  if (migrated.after?.events !== 2 || migrated.after?.handoffs !== 1 || migrated.after?.sessions !== 2) {
+    fail(`global migrate counts mismatch: ${JSON.stringify(migrated)}`);
+  }
+  const migratedAgain = jsonOk(
+    "global migrate idempotent",
+    runCli(["global", "migrate", "--root", tempRoot, "--global-db", globalDb, "--json"], workspace, env),
+  );
+  if (migratedAgain.after?.events !== migrated.after.events || migratedAgain.after?.sources !== migrated.after.sources)
+    fail("global migrate was not idempotent");
+  const globalList = jsonOk("global list", runCli(["global", "list", "--global-db", globalDb, "--json"], workspace, env));
+  if (!Array.isArray(globalList.sources) || globalList.counts?.events !== 2 || globalList.counts?.handoffs !== 1) {
+    fail(`global list counts mismatch: ${JSON.stringify(globalList)}`);
   }
 
-  jsonOk("event seed 1", runCli(["event", "record", "--type", "decision", "--summary", "Adopt ontology lifecycle for local-first memory"], workspace));
-  jsonOk("event seed 2", runCli(["event", "record", "--type", "qa", "--summary", "Verify ontology lifecycle recall for local-first memory"], workspace));
-  jsonOk("event seed 3", runCli(["event", "record", "--type", "decision", "--summary", "Keep ontology promotion durable and searchable"], workspace));
-
-  const scan = jsonOk("global scan", runCli(["global", "scan", "--root", tempRoot, "--json"], workspace));
-  if (!Array.isArray(scan.candidates) || scan.candidates.length !== 1) fail(`scan candidates mismatch: ${JSON.stringify(scan)}`);
-  const migrated = jsonOk("global migrate", runCli(["global", "migrate", "--root", tempRoot, "--global-db", globalDb, "--json"], workspace));
-  if (migrated.after?.events !== 3) fail(`global migrate event count mismatch: ${JSON.stringify(migrated)}`);
-  const migratedAgain = jsonOk("global migrate idempotent", runCli(["global", "migrate", "--root", tempRoot, "--global-db", globalDb, "--json"], workspace));
-  if (migratedAgain.after?.events !== migrated.after.events) fail("global migrate was not idempotent");
-
-  const candidates = jsonOk("ontology candidates", runCli(["ontology", "candidates"], workspace));
-  const ontology = candidates.concepts.find((concept) => concept.label === "ontology");
-  if (!ontology || ontology.refCount < 2) fail(`ontology candidate missing/refCount low: ${JSON.stringify(candidates.concepts)}`);
-
-  const firstScore = jsonOk("ontology score", runCli(["ontology", "score"], workspace));
-  const secondScore = jsonOk("ontology recompute stale_state", runCli(["ontology", "recompute"], workspace));
-  if (firstScore.scannedConcepts < 1 || secondScore.scannedConcepts !== firstScore.scannedConcepts) fail("score/recompute did not scan concepts consistently");
-
-  const stateDb = join(workspace, ".omo", "memory", "state.sqlite");
-  const beforeMissingPromote = durableCount(stateDb);
-  const missing = jsonFail("missing promote", runCli(["ontology", "promote", "--concept", "missing-candidate"], workspace));
-  if (!missing.error.includes("candidate not found")) fail(`missing promote error was misleading: ${missing.error}`);
-  if (durableCount(stateDb) !== beforeMissingPromote) fail("missing promote created partial durable rows");
-
-  const promoted = jsonOk(
-    "ontology promote",
-    runCli(["ontology", "promote", "--concept", "ontology", "--body", "ontology durable body token=sk-test1234567890"], workspace),
-  );
-  if (promoted.durableMemory?.body?.includes("sk-test1234567890")) fail("promote leaked raw secret in durable body");
-  if (!promoted.durableMemory?.body?.includes("[REDACTED]")) fail("promote did not redact secret body");
-
-  const recalled = jsonOk("ontology recall", runCli(["ontology", "recall", "--query", "ontology", "--limit", "5"], workspace));
-  if (!recalled.durableMemories.some((memory) => memory.id === promoted.durableMemory.id)) fail("ontology recall missed promoted durable memory");
-  if (JSON.stringify(recalled).includes("sk-test1234567890")) fail("ontology recall leaked raw secret");
-
-  const demoted = jsonOk("ontology demote", runCli(["ontology", "demote", "--id", promoted.durableMemory.id], workspace));
-  if (demoted.durableMemory?.retentionClass !== "temporary") fail("ontology demote did not lower retention class");
-
-  const superseded = jsonOk(
-    "ontology supersede",
-    runCli(["ontology", "supersede", "--id", promoted.durableMemory.id, "--summary", "ontology replacement"], workspace),
-  );
-  if (typeof superseded.supersedingId !== "string") fail("ontology supersede did not create replacement");
-  const afterSupersede = jsonOk("ontology recall after supersede", runCli(["ontology", "recall", "--query", "ontology", "--limit", "10"], workspace));
-  if (!afterSupersede.durableMemories.some((memory) => memory.id === superseded.supersedingId)) fail("superseding durable memory not recallable");
+  const refusedPurge = jsonFail("purge requires yes", runCli(["purge"], workspace, env));
+  if (!/purge requires --yes/i.test(refusedPurge.error)) fail(`purge refusal was misleading: ${refusedPurge.error}`);
+  const purged = jsonOk("purge", runCli(["purge", "--yes"], workspace, env));
+  if (purged.deleted?.events !== 2 || purged.deleted?.handoffs !== 1 || purged.deleted?.sessions !== 2)
+    fail(`purge counts mismatch: ${JSON.stringify(purged)}`);
+  const exportedAfterPurge = jsonOk("export after purge", runCli(["export"], workspace, env));
+  if (exportedAfterPurge.events.length !== 0 || exportedAfterPurge.handoffs.length !== 0 || exportedAfterPurge.sessions.length !== 0) {
+    fail(`purge left ledger rows: ${JSON.stringify(exportedAfterPurge)}`);
+  }
 
   mkdirSync(dirname(evidencePath), { recursive: true });
   appendFileSync(
@@ -109,21 +165,22 @@ try {
     [
       `\n[GREEN ${new Date().toISOString()}] node scripts/verify-cli-lifecycle.mjs PASS`,
       `temp_root=${tempRoot}`,
-      "help_lists_lifecycle=true",
+      "help_lists_core_ledger=true",
+      "help_lists_removed_surfaces=false",
+      `events_recorded=${exported.events.length}`,
+      `handoffs_written=${exported.handoffs.length}`,
+      "recent_recall_export_redacted=true",
       `global_scan_candidates=${scan.candidates.length}`,
       `global_migrate_events=${migrated.after.events}`,
+      `global_list_events=${globalList.counts.events}`,
       "global_migrate_idempotent=true",
-      `ontology_candidate_ref_count=${ontology.refCount}`,
-      `score_scanned=${firstScore.scannedConcepts}`,
-      "missing_promote_json_error=true",
-      "missing_promote_partial_rows=false",
-      `promoted_id=${promoted.durableMemory.id}`,
-      "promote_secret_redacted=true",
-      `superseding_id=${superseded.supersedingId}`,
-      "adversarial=malformed_input:PASS,dirty_worktree:PASS,stale_state:PASS,misleading_success_output:PASS,generated_cached_artifacts:PASS,secret_leak_redaction:PASS,idempotency_global_migrate:PASS",
+      "removed_cli_surfaces_absent_from_help=true",
+      "purge_requires_confirmation=true",
+      "purge_deleted_core_ledger=true",
+      "adversarial=dirty_worktree:PASS,secret_redaction:PASS,idempotency_global_migrate:PASS,removed_surfaces_absent:PASS,purge_confirmation:PASS",
     ].join("\n"),
   );
-  console.log("VERIFY PASS: Todo 7 CLI ontology lifecycle");
+  console.log("VERIFY PASS: core ledger CLI lifecycle");
 } finally {
   rmSync(tempRoot, { recursive: true, force: true });
   console.log("CLEANUP: removed", tempRoot);

@@ -9,7 +9,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = dirname(__dirname);
 const distGlobalMemory = join(root, "dist", "globalMemory.js");
 const distMemoryDb = join(root, "dist", "memoryDb.js");
-const evidencePath = join(root, ".omo", "evidence", "omo-memory-second-brain-retention", "task-5-global-index.txt");
+const evidencePath = join(root, ".omo", "evidence", "omo-memory-core-ledger", "global-scan.txt");
 
 function fail(message) {
   throw new Error(`VERIFY FAIL: ${message}`);

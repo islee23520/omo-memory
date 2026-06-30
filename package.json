@@ -1,6 +1,6 @@
 {
   "name": "omo-memory",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "description": "Host-neutral local SQLite memory and session ledger for OMO adapters, exposed through CLI and MCP.",
   "type": "module",
   "files": [
@@ -33,16 +33,16 @@
     "start": "node dist/cli.js",
     "prepack": "npm run build",
     "presmoke": "npm run build",
-    "smoke": "npm run smoke:cli && npm run smoke:mcp && npm run smoke:hook",
+    "smoke": "npm run smoke:cli && npm run smoke:mcp && npm run smoke:hook && npm run smoke:legacy",
     "smoke:cli": "node scripts/smoke-cli.mjs",
     "smoke:mcp": "node scripts/smoke-mcp.mjs",
     "smoke:hook": "node scripts/verify-user-prompt-hook.mjs",
+    "smoke:legacy": "node scripts/verify-legacy-schema-compat.mjs",
     "mcp": "node dist/cli.js mcp",
     "issue:epic": "node scripts/create-epic-issue.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@opentui/core": "0.4.2",
     "better-sqlite3": "^12.11.1",
     "zod": "^4.4.3"
   },

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
-import { migrate, openMemoryDb, SCHEMA_VERSION } from "./memoryDb.js";
+import { migrate, openMemoryDb, SCHEMA_VERSION, tableExists } from "./memoryDb.js";
 import { redactSecrets } from "./privacy.js";
 import { defaultDbPath, resolveProjectContext } from "./projectContext.js";
 import { resolveStoredProject } from "./projectMigration.js";
@@ -152,8 +152,9 @@ export function exportMemory(dbPath = defaultDbPath()): MemoryExport {
       WHERE project_id = ? ORDER BY created_at ASC, id ASC
     `)
       .all(project.id) as HandoffExportRow[];
-    const concepts = db
-      .prepare(`
+    const concepts = tableExists(db, "concepts")
+      ? (db
+          .prepare(`
       SELECT id, kind, label, description, aliases_json AS aliasesJson, payload_json AS payloadJson,
         valid_from AS validFrom, valid_to AS validTo, created_at AS createdAt, updated_at AS updatedAt,
         COALESCE(score, 0) AS score,
@@ -164,38 +165,47 @@ export function exportMemory(dbPath = defaultDbPath()): MemoryExport {
         first_seen AS firstSeen, last_seen AS lastSeen
       FROM concepts WHERE project_id = ? ORDER BY created_at ASC, id ASC
     `)
-      .all(project.id) as ConceptExportRow[];
-    const relations = db
-      .prepare(`
+          .all(project.id) as ConceptExportRow[])
+      : [];
+    const relations = tableExists(db, "relations")
+      ? (db
+          .prepare(`
       SELECT id, source_type AS sourceType, source_id AS sourceId, target_type AS targetType, target_id AS targetId,
         relation, weight, payload_json AS payloadJson, valid_from AS validFrom, valid_to AS validTo,
         created_at AS createdAt, updated_at AS updatedAt
       FROM relations WHERE project_id = ? ORDER BY created_at ASC, id ASC
     `)
-      .all(project.id) as RelationExportRow[];
-    const durableMemories = db
-      .prepare(`
+          .all(project.id) as RelationExportRow[])
+      : [];
+    const durableMemories = tableExists(db, "durable_memories")
+      ? (db
+          .prepare(`
       SELECT id, type, summary, body, source_event_id AS sourceEventId, source_handoff_id AS sourceHandoffId,
         confidence, status, COALESCE(retention_class, 'durable') AS retentionClass,
         valid_from AS validFrom, valid_to AS validTo, created_at AS createdAt, updated_at AS updatedAt
       FROM durable_memories WHERE project_id = ? ORDER BY created_at ASC, id ASC
     `)
-      .all(project.id) as DurableMemoryExportRow[];
-    const decisionRecords = db
-      .prepare(`
+          .all(project.id) as DurableMemoryExportRow[])
+      : [];
+    const decisionRecords = tableExists(db, "decision_records")
+      ? (db
+          .prepare(`
       SELECT id, title, rationale, alternatives_json AS alternativesJson, evidence_json AS evidenceJson,
         status, reversible, source_event_id AS sourceEventId, supersedes_decision_id AS supersedesDecisionId,
         valid_from AS validFrom, valid_to AS validTo, created_at AS createdAt, updated_at AS updatedAt
       FROM decision_records WHERE project_id = ? ORDER BY created_at ASC, id ASC
     `)
-      .all(project.id) as DecisionRecordExportRow[];
-    const memoryReferences = db
-      .prepare(`
+          .all(project.id) as DecisionRecordExportRow[])
+      : [];
+    const memoryReferences = tableExists(db, "memory_references")
+      ? (db
+          .prepare(`
       SELECT id, source_type AS sourceType, source_id AS sourceId, target_type AS targetType, target_id AS targetId,
         ref_kind AS refKind, weight, created_at AS createdAt
       FROM memory_references WHERE project_id = ? ORDER BY created_at ASC, id ASC
     `)
-      .all(project.id) as MemoryReferenceExportRow[];
+          .all(project.id) as MemoryReferenceExportRow[])
+      : [];
     return {
       schemaVersion: SCHEMA_VERSION,
       exportedAt: new Date().toISOString(),
@@ -223,18 +233,16 @@ export function purgeMemory(input: PurgeMemoryInput, dbPath = defaultDbPath()): 
     migrate(db);
     const project = resolveStoredProject(db, resolveProjectContext());
     const deleteProject = db.transaction(() => {
-      const relations = db
-        .prepare("DELETE FROM relations WHERE project_id IN (SELECT id FROM projects WHERE id = ? OR repo_root = ?)")
-        .run(project.id, project.repoRoot).changes;
-      const decisionRecords = db
-        .prepare("DELETE FROM decision_records WHERE project_id IN (SELECT id FROM projects WHERE id = ? OR repo_root = ?)")
-        .run(project.id, project.repoRoot).changes;
-      const durableMemories = db
-        .prepare("DELETE FROM durable_memories WHERE project_id IN (SELECT id FROM projects WHERE id = ? OR repo_root = ?)")
-        .run(project.id, project.repoRoot).changes;
-      const concepts = db
-        .prepare("DELETE FROM concepts WHERE project_id IN (SELECT id FROM projects WHERE id = ? OR repo_root = ?)")
-        .run(project.id, project.repoRoot).changes;
+      const deleteLegacyRows = (table: string): number => {
+        if (!tableExists(db, table)) return 0;
+        return db.prepare(`DELETE FROM ${table} WHERE project_id IN (SELECT id FROM projects WHERE id = ? OR repo_root = ?)`).run(project.id, project.repoRoot)
+          .changes;
+      };
+      const memoryReferences = deleteLegacyRows("memory_references");
+      const relations = deleteLegacyRows("relations");
+      const decisionRecords = deleteLegacyRows("decision_records");
+      const durableMemories = deleteLegacyRows("durable_memories");
+      const concepts = deleteLegacyRows("concepts");
       const events = db
         .prepare("DELETE FROM events WHERE project_id IN (SELECT id FROM projects WHERE id = ? OR repo_root = ?)")
         .run(project.id, project.repoRoot).changes;
@@ -243,9 +251,6 @@ export function purgeMemory(input: PurgeMemoryInput, dbPath = defaultDbPath()): 
         .run(project.id, project.repoRoot).changes;
       const sessions = db
         .prepare("DELETE FROM sessions WHERE project_id IN (SELECT id FROM projects WHERE id = ? OR repo_root = ?)")
-        .run(project.id, project.repoRoot).changes;
-      const memoryReferences = db
-        .prepare("DELETE FROM memory_references WHERE project_id IN (SELECT id FROM projects WHERE id = ? OR repo_root = ?)")
         .run(project.id, project.repoRoot).changes;
       const projects = db.prepare("DELETE FROM projects WHERE id = ? OR repo_root = ?").run(project.id, project.repoRoot).changes;
       return { events, handoffs, sessions, projects, concepts, relations, durableMemories, decisionRecords, memoryReferences };

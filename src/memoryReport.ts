@@ -1,4 +1,4 @@
-import { migrate, openMemoryDb } from "./memoryDb.js";
+import { migrate, openMemoryDb, tableExists } from "./memoryDb.js";
 import { defaultDbPath, resolveProjectContext } from "./projectContext.js";
 import { resolveStoredProject } from "./projectMigration.js";
 import type { DoctorReport, MemoryPaths } from "./types.js";
@@ -13,7 +13,7 @@ export function doctorReport(dbPath = defaultDbPath()): DoctorReport {
     migrate(db);
     const project = resolveStoredProject(db, resolveProjectContext());
     const schemaVersion = Number(db.prepare("SELECT value FROM schema_meta WHERE key = 'schema_version'").pluck().get());
-    const count = (table: string): number => Number(db.prepare(`SELECT COUNT(*) FROM ${table}`).pluck().get());
+    const count = (table: string): number => (tableExists(db, table) ? Number(db.prepare(`SELECT COUNT(*) FROM ${table}`).pluck().get()) : 0);
     return {
       paths: { dbPath },
       schemaVersion,

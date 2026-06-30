@@ -23,13 +23,6 @@ const expectedTools = [
   "memory_global_scan",
   "memory_global_migrate",
   "memory_global_list",
-  "memory_ontology_candidates",
-  "memory_ontology_extract",
-  "memory_ontology_score",
-  "memory_ontology_promote",
-  "memory_ontology_demote",
-  "memory_ontology_supersede",
-  "memory_ontology_recall",
 ];
 const pending = new Map();
 let nextId = 1;
@@ -125,6 +118,9 @@ try {
     if (!toolNames.includes(tool)) throw new Error(`missing MCP tool ${tool}`);
     pass(`${tool} listed`);
   }
+  const ontologyTools = toolNames.filter((name) => name.startsWith("memory_ontology_"));
+  if (ontologyTools.length !== 0) throw new Error(`removed ontology tools still listed: ${ontologyTools.join(", ")}`);
+  pass("memory_ontology tools absent");
 
   const init = parseToolText(await callTool(child, "memory_init"));
   if (init.dbPath !== dbPath || init.schemaVersion !== 3) throw new Error("memory_init returned unexpected metadata");
@@ -154,58 +150,6 @@ try {
   if (typeof event.eventId !== "string") throw new Error("memory_record_event did not return eventId");
   pass("memory_record_event call");
 
-  const candidates = parseToolText(
-    await callTool(child, "memory_ontology_candidates", { summary: "MCP smoke durable ontology lifecycle", eventType: "decision" }),
-  );
-  if (!Array.isArray(candidates.candidates) || !candidates.candidates.includes("durable")) throw new Error("memory_ontology_candidates missed expected term");
-  pass("memory_ontology_candidates call");
-
-  const extracted = parseToolText(
-    await callTool(child, "memory_ontology_extract", {
-      sourceEventId: event.eventId,
-      summary: "MCP smoke durable ontology lifecycle",
-      eventType: "decision",
-    }),
-  );
-  if (!Array.isArray(extracted.concepts) || extracted.concepts.length === 0) throw new Error("memory_ontology_extract did not create concepts");
-  pass("memory_ontology_extract call");
-
-  const scored = parseToolText(await callTool(child, "memory_ontology_score", { nowIso: "2026-06-29T00:00:00.000Z" }));
-  if (typeof scored.scannedConcepts !== "number") throw new Error("memory_ontology_score returned malformed result");
-  pass("memory_ontology_score call");
-
-  const promoted = parseToolText(
-    await callTool(child, "memory_ontology_promote", {
-      type: "preference",
-      summary: "MCP smoke durable ontology lifecycle",
-      body: "Bearer smoke-secret-12345",
-      sourceEventId: event.eventId,
-      confidence: 0.9,
-    }),
-  );
-  if (typeof promoted.id !== "string" || JSON.stringify(promoted).includes("smoke-secret-12345")) throw new Error("memory_ontology_promote failed redaction");
-  pass("memory_ontology_promote call");
-
-  const demoted = parseToolText(await callTool(child, "memory_ontology_demote", { durableId: promoted.id, retentionClass: "temporary" }));
-  if (demoted.retentionClass !== "temporary") throw new Error("memory_ontology_demote did not update retention");
-  pass("memory_ontology_demote call");
-
-  const ontologyRecall = parseToolText(await callTool(child, "memory_ontology_recall", { query: "durable ontology", limit: 5 }));
-  if (!Array.isArray(ontologyRecall.durableMemories) || !ontologyRecall.durableMemories.some((item) => item.id === promoted.id))
-    throw new Error("memory_ontology_recall did not return promoted durable memory");
-  pass("memory_ontology_recall call");
-
-  const superseded = parseToolText(
-    await callTool(child, "memory_ontology_supersede", {
-      durableId: promoted.id,
-      reason: "smoke",
-      newSummary: "MCP smoke durable ontology successor",
-    }),
-  );
-  if (superseded.originalId !== promoted.id || typeof superseded.supersedingId !== "string")
-    throw new Error("memory_ontology_supersede returned malformed result");
-  pass("memory_ontology_supersede call");
-
   const recent = parseToolText(await callTool(child, "memory_recent_events", { limit: 5 }));
   if (!Array.isArray(recent.events) || !recent.events.some((item) => item.summary.includes("[REDACTED]")))
     throw new Error("memory_recent_events did not include redacted event");
@@ -223,9 +167,6 @@ try {
   const wildcardRecall = parseToolText(await callTool(child, "memory_recall_events", { query: "___", limit: 5 }));
   if (!Array.isArray(wildcardRecall.events) || wildcardRecall.events.length !== 0) throw new Error("memory_recall_events treated wildcard query as pattern");
   await expectToolError(child, "memory_recall_events", { query: "", limit: 5 });
-  await expectToolError(child, "memory_ontology_candidates", { summary: "" });
-  await expectToolError(child, "memory_ontology_promote", { type: "", summary: "" });
-  await expectToolError(child, "memory_ontology_recall", { query: "" });
   pass("memory_recall_events call");
 
   const handoff = parseToolText(await callTool(child, "memory_write_handoff", { summaryMd: "MCP smoke handoff Bearer abcdef123456" }));

@@ -7,7 +7,7 @@ import Database from "better-sqlite3";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = dirname(__dirname);
-const evidencePath = join(root, ".omo", "evidence", "omo-memory-second-brain-retention", "task-11-backfill-fixtures.txt");
+const evidencePath = join(root, ".omo", "evidence", "omo-memory-core-ledger", "global-import-fixtures.txt");
 
 const realDbPaths = [
   "/Users/ilseoblee/workspace/game-engine/Linaforge/.omo/memory/state.sqlite",
@@ -26,8 +26,8 @@ const fixtures = [
     host: "codex",
     adapter: "lazycodex",
     events: [
-      ["linaforge-event-1", "decision", "Linaforge game engine chose ontology graph backfill for memory"],
-      ["linaforge-event-2", "qa_evidence", "Linaforge graph verifier preserves source provenance"],
+      ["linaforge-event-1", "decision", "Linaforge game engine records renderer decisions in the local ledger"],
+      ["linaforge-event-2", "qa_evidence", "Linaforge verifier preserves source provenance during global import"],
     ],
   },
   {
@@ -39,8 +39,8 @@ const fixtures = [
     host: "codex",
     adapter: "lazycodex",
     events: [
-      ["omo-memory-event-1", "decision", "OMO Memory global sqlite migration keeps ontology source provenance"],
-      ["omo-memory-event-2", "qa_evidence", "omo-memory retention score promotes durable second-brain facts"],
+      ["omo-memory-event-1", "decision", "OMO Memory global sqlite migration keeps event source provenance"],
+      ["omo-memory-event-2", "qa_evidence", "omo-memory recall remains explicit after global import"],
     ],
   },
   {
@@ -52,8 +52,8 @@ const fixtures = [
     host: "grok",
     adapter: "lfg",
     events: [
-      ["lfg-event-1", "decision", "lfg adapter records user action summaries for ontology recall"],
-      ["lfg-event-2", "qa_evidence", "lfg backfill shares global sqlite source references"],
+      ["lfg-event-1", "decision", "lfg adapter records user action summaries for explicit recall"],
+      ["lfg-event-2", "qa_evidence", "lfg import shares global sqlite source references"],
     ],
   },
   {
@@ -73,7 +73,7 @@ function fail(message) {
 }
 
 function count(db, table) {
-  return db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count;
+  return Number(db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).pluck().get());
 }
 
 function captureMtimes(paths) {
@@ -149,23 +149,12 @@ function createFixtureDb(dbPath, fixture) {
 }
 
 async function main() {
-  const [
-    { scanForMemoryDbs, migrateToGlobalMemory, listGlobalMemory },
-    { applyConceptExtraction },
-    { createDurableMemory, listOntologyRows, recordMemoryReference },
-    { recomputeRetentionScores },
-    { projectOntologyGraph },
-    { resolveProjectContext },
-  ] = await Promise.all([
+  const [{ scanForMemoryDbs, migrateToGlobalMemory, listGlobalMemory }, { resolveProjectContext }] = await Promise.all([
     import(join(root, "dist", "globalMemory.js")),
-    import(join(root, "dist", "conceptExtraction.js")),
-    import(join(root, "dist", "ontologyCore.js")),
-    import(join(root, "dist", "retentionRecompute.js")),
-    import(join(root, "dist", "ontologyGraph.js")),
     import(join(root, "dist", "projectContext.js")),
   ]);
 
-  const tempRoot = mkdtempSync(join(tmpdir(), "omo-backfill-fixtures-"));
+  const tempRoot = mkdtempSync(join(tmpdir(), "omo-global-import-fixtures-"));
   try {
     for (const fixture of fixtures) createFixtureDb(fixtureDbPath(tempRoot, fixture), fixture);
     const sourceDbs = fixtures.map((fixture) => fixtureDbPath(tempRoot, fixture));
@@ -196,63 +185,29 @@ async function main() {
       db.close();
     }
     if (aggregateEvents.length !== 7) fail(`aggregate events ${aggregateEvents.length} !== 7`);
-
-    let referenceCount = 0;
-    for (const event of aggregateEvents) {
-      referenceCount += applyConceptExtraction(globalDbPath, aggregateProject, event.id, event.summary, event.type).references.length;
-    }
-    const recompute = recomputeRetentionScores({ dbPath: globalDbPath, nowIso: "2026-06-29T00:00:00.000Z" });
-    const rows = listOntologyRows(globalDbPath, aggregateProject);
-    const labels = rows.concepts.map((concept) => concept.label);
-    for (const label of ["linaforge", "lfg", "omo-memory"]) {
-      if (!labels.includes(label)) fail(`missing cross-project concept ${label}; labels=${labels.join(",")}`);
-    }
-    const concept = rows.concepts.find((row) => row.label === "linaforge");
-    if (concept === undefined) fail("linaforge concept missing for promotion");
-    const durable = createDurableMemory(globalDbPath, aggregateProject, {
-      type: "concept",
-      summary: "Promoted cross-project Linaforge memory",
-      body: "Linaforge appears in the integrated global OMO Memory backfill.",
-      confidence: 0.9,
-      status: "active",
-      retentionClass: "durable",
-    });
-    recordMemoryReference(globalDbPath, aggregateProject, {
-      sourceType: "concept",
-      sourceId: concept.id,
-      targetType: "durable_memory",
-      targetId: durable.id,
-      refKind: "promotes",
-      weight: 1,
-    });
-    const graph = projectOntologyGraph({ dbPath: globalDbPath, query: "linaforge" });
-    if (graph.nodes.length < 1 || graph.detail?.label !== "linaforge") fail(`graph did not expose promoted concept: ${JSON.stringify(graph)}`);
+    if (!aggregateEvents.some((event) => event.summary.includes("explicit recall"))) fail("expected imported event summary missing");
 
     const secondReport = migrateToGlobalMemory({ rootPath: tempRoot, globalDbPath });
     assertMtimesUnchanged("fixture rerun", sourceMtimes);
     if (secondReport.after.events !== firstReport.after.events) fail("rerun duplicated global events");
-    const duplicateCount = firstReport.after.events;
+
     const listed = listGlobalMemory(globalDbPath);
+    if (listed.counts.sources !== 4 || listed.counts.events !== 7) fail(`global list mismatch: ${JSON.stringify(listed.counts)}`);
     const report = {
       globalDbPath,
       realDbHits: realHitCount,
       sourceProjectCount: firstReport.sources,
       importedProjectCount: firstReport.after.projects,
       eventCount: firstReport.after.events,
-      candidateCount: rows.concepts.length,
-      referenceCount,
-      promotedCount: 1,
-      duplicateCount,
+      duplicateCount: firstReport.after.events,
       skippedCount: firstReport.skipped.length,
       schemaVersions: listed.sources.map((source) => source.schemaVersion).sort((left, right) => left - right),
-      recompute,
       sourceMtimes: "unchanged",
       realMtimes: "unchanged",
-      graphNodesForLinaforge: graph.nodes.length,
     };
     mkdirSync(dirname(evidencePath), { recursive: true });
     writeFileSync(evidencePath, `${JSON.stringify(report, null, 2)}\n`);
-    console.log("VERIFY PASS: cross-project backfill fixtures into global SQLite with ontology extraction");
+    console.log("VERIFY PASS: cross-project event ledgers imported into global SQLite with provenance");
     console.log(JSON.stringify(report, null, 2));
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });

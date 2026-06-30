@@ -6,9 +6,23 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const evidencePath = join(root, ".omo", "evidence", "omo-memory-second-brain-retention", "task-13-installed-e2e.txt");
+const evidencePath = join(root, ".omo", "evidence", "omo-memory-core-ledger", "task-13-installed-e2e.txt");
 const pathEnv = `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH ?? ""}`;
 const expectedVersion = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
+const expectedMcpTools = [
+  "memory_init",
+  "memory_export",
+  "memory_purge",
+  "memory_global_scan",
+  "memory_global_migrate",
+  "memory_global_list",
+  "memory_start_session",
+  "memory_bootstrap_session",
+  "memory_record_event",
+  "memory_recent_events",
+  "memory_recall_events",
+  "memory_write_handoff",
+];
 
 function fail(message) {
   throw new Error(`VERIFY FAIL: ${message}`);
@@ -25,6 +39,17 @@ function run(command, args, options = {}) {
   return { stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
 }
 
+function runFail(command, args, options = {}) {
+  const result = spawnSync(command, args, {
+    cwd: options.cwd ?? root,
+    env: { ...process.env, PATH: pathEnv, ...(options.env ?? {}) },
+    encoding: "utf8",
+    timeout: options.timeout ?? 30000,
+  });
+  if (result.status === 0) fail(`${command} ${args.join(" ")} unexpectedly succeeded`);
+  return { stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+}
+
 function runJson(args, options = {}) {
   const result = run("omo-memory", args, options);
   const parsed = JSON.parse(result.stdout);
@@ -32,8 +57,11 @@ function runJson(args, options = {}) {
   return parsed;
 }
 
-function shellQuote(value) {
-  return `'${value.replaceAll("'", "'\\''")}'`;
+function runJsonFail(args, options = {}) {
+  const result = runFail("omo-memory", args, options);
+  const parsed = JSON.parse(result.stdout);
+  if (parsed.ok !== false || typeof parsed.error !== "string") fail(`omo-memory ${args.join(" ")} did not return JSON error: ${result.stdout}`);
+  return parsed;
 }
 
 function writeFixtureProject(tempRoot, name, events) {
@@ -48,12 +76,16 @@ function writeFixtureProject(tempRoot, name, events) {
       env: { OMO_MEMORY_DB: dbPath },
     });
   }
-  return { projectDir, dbPath };
+  runJson(["handoff", "write", "--summary", `${name} installed e2e handoff`, "--session-id", session.sessionId], {
+    cwd: projectDir,
+    env: { OMO_MEMORY_DB: dbPath },
+  });
+  return { projectDir, dbPath, sessionId: session.sessionId };
 }
 
-function createMcpClient(dbPath) {
+function createMcpClient(dbPath, cwd) {
   const child = spawn("omo-memory", ["mcp"], {
-    cwd: root,
+    cwd,
     env: { ...process.env, PATH: pathEnv, OMO_MEMORY_DB: dbPath },
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -112,15 +144,18 @@ function toolText(response) {
   return text;
 }
 
-function parseTool(response) {
+function parseTool(response, options = {}) {
   const parsed = JSON.parse(toolText(response));
-  if (parsed.ok === false) fail(`MCP tool returned ok=false: ${JSON.stringify(parsed)}`);
+  if (parsed.ok === false && options.allowOkFalse !== true) fail(`MCP tool returned ok=false: ${JSON.stringify(parsed)}`);
   return parsed;
 }
 
 async function verifyInstalledMcp(tempRoot) {
-  const dbPath = join(tempRoot, "mcp.sqlite");
-  const client = createMcpClient(dbPath);
+  const mcpRoot = join(tempRoot, "mcp-root");
+  const projectDir = join(mcpRoot, "mcp-project");
+  const dbPath = join(projectDir, ".omo", "memory", "state.sqlite");
+  mkdirSync(projectDir, { recursive: true });
+  const client = createMcpClient(dbPath, projectDir);
   try {
     const initialize = await client.send("initialize", {
       protocolVersion: "2025-06-18",
@@ -131,97 +166,128 @@ async function verifyInstalledMcp(tempRoot) {
       fail(`unexpected installed MCP serverInfo: ${JSON.stringify(initialize.result?.serverInfo)}`);
     }
     client.notify("notifications/initialized");
+    const tools = await client.send("tools/list");
+    const toolNames = tools.result?.tools?.map((tool) => tool.name).filter((name) => typeof name === "string") ?? [];
+    for (const tool of expectedMcpTools) {
+      if (!toolNames.includes(tool)) fail(`installed MCP missing ${tool}`);
+    }
+    const removed = toolNames.filter((name) => name.startsWith("memory_ontology_"));
+    if (removed.length > 0) fail(`installed MCP still lists ontology tools: ${removed.join(", ")}`);
+
+    const init = parseTool(await client.send("tools/call", { name: "memory_init", arguments: {} }));
+    if (init.dbPath !== dbPath) fail(`installed MCP init wrong db path: ${JSON.stringify(init)}`);
     const bootstrap = parseTool(
       await client.send("tools/call", { name: "memory_bootstrap_session", arguments: { host: "codex", adapter: "installed-e2e", limit: 5 } }),
     );
     if (typeof bootstrap.sessionId !== "string" || "recentEvents" in bootstrap) fail("installed MCP bootstrap returned recentEvents");
-    const badPromotionText = toolText(await client.send("tools/call", { name: "memory_ontology_promote", arguments: { type: "", summary: "" } }));
-    if (!badPromotionText.includes("Input validation error")) fail(`installed MCP malformed promotion was not rejected: ${badPromotionText}`);
+    const event = parseTool(
+      await client.send("tools/call", {
+        name: "memory_record_event",
+        arguments: { type: "decision", summary: "installed MCP core ledger event", sessionId: bootstrap.sessionId },
+      }),
+    );
+    if (typeof event.eventId !== "string") fail("installed MCP record event missing eventId");
+    const recent = parseTool(await client.send("tools/call", { name: "memory_recent_events", arguments: { limit: 5 } }));
+    if (recent.events.length !== 1) fail(`installed MCP recent mismatch: ${JSON.stringify(recent)}`);
+    const recall = parseTool(await client.send("tools/call", { name: "memory_recall_events", arguments: { query: "core ledger", limit: 5 } }));
+    if (!recall.events.some((item) => item.id === event.eventId)) fail("installed MCP recall missed event");
+    const handoff = parseTool(
+      await client.send("tools/call", { name: "memory_write_handoff", arguments: { summaryMd: "installed MCP handoff", sessionId: bootstrap.sessionId } }),
+    );
+    if (typeof handoff.handoffId !== "string") fail("installed MCP handoff missing handoffId");
+    const exported = parseTool(await client.send("tools/call", { name: "memory_export", arguments: {} }));
+    if (exported.events.length !== 1 || exported.handoffs.length !== 1) fail(`installed MCP export mismatch: ${JSON.stringify(exported)}`);
+    const globalDbPath = join(mcpRoot, "mcp-global.sqlite");
+    const scan = parseTool(await client.send("tools/call", { name: "memory_global_scan", arguments: { rootPath: mcpRoot } }));
+    if (scan.candidates.length !== 1) fail(`installed MCP global scan mismatch: ${JSON.stringify(scan)}`);
+    const migrate = parseTool(await client.send("tools/call", { name: "memory_global_migrate", arguments: { rootPath: mcpRoot, globalDbPath } }));
+    if (migrate.after.events !== 1 || migrate.after.handoffs !== 1) fail(`installed MCP global migrate mismatch: ${JSON.stringify(migrate)}`);
+    const list = parseTool(await client.send("tools/call", { name: "memory_global_list", arguments: { globalDbPath } }));
+    if (list.counts.events !== 1 || list.counts.handoffs !== 1 || list.sources.length !== 1)
+      fail(`installed MCP global list mismatch: ${JSON.stringify(list)}`);
+    const refusedPurge = parseTool(await client.send("tools/call", { name: "memory_purge", arguments: { confirm: false } }), { allowOkFalse: true });
+    if (refusedPurge.ok !== false) fail(`installed MCP purge false confirm mismatch: ${JSON.stringify(refusedPurge)}`);
+    const purged = parseTool(await client.send("tools/call", { name: "memory_purge", arguments: { confirm: true } }));
+    if (purged.deleted.events !== 1 || purged.deleted.handoffs !== 1) fail(`installed MCP purge mismatch: ${JSON.stringify(purged)}`);
+    return { toolCount: toolNames.length, globalDbPath };
   } finally {
     await client.close();
-  }
-}
-
-async function pause(ms) {
-  await new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function verifyInstalledGraph(globalDbPath) {
-  const session = `ulw-installed-graph-${process.pid}`;
-  const command = `omo-memory graph tui --db ${shellQuote(globalDbPath)} --query linaforge`;
-  run("tmux", ["new-session", "-d", "-x", "120", "-y", "40", "-s", session, command], { env: { PATH: pathEnv } });
-  try {
-    const deadline = Date.now() + 6000;
-    let capture = "";
-    while (Date.now() < deadline) {
-      const result = run("tmux", ["capture-pane", "-p", "-S", "-200", "-E", "200", "-t", session], { env: { PATH: pathEnv } });
-      capture = result.stdout;
-      if (capture.includes("OMO Ontology Graph") && capture.includes("linaforge") && capture.includes("Retention:")) break;
-      await pause(250);
-    }
-    if (!capture.includes("OMO Ontology Graph") || !capture.includes("linaforge") || !capture.includes("Retention:")) {
-      fail(`installed graph capture missing expected text:\n${capture}`);
-    }
-    run("tmux", ["send-keys", "-t", session, "q"], { env: { PATH: pathEnv } });
-    await pause(800);
-    const hasSession = spawnSync("tmux", ["has-session", "-t", session], { env: { ...process.env, PATH: pathEnv }, encoding: "utf8" });
-    if (hasSession.status === 0) fail(`tmux session still running: ${session}`);
-    return capture;
-  } finally {
-    spawnSync("tmux", ["kill-session", "-t", session], { env: { ...process.env, PATH: pathEnv }, encoding: "utf8" });
   }
 }
 
 async function main() {
   const install = run("npm", ["install", "-g", "."], { cwd: root, timeout: 120000 });
   const help = run("omo-memory", ["--help"]);
-  if (!help.stdout.includes("omo-memory graph tui")) fail("installed help missing graph tui command");
+  for (const text of [
+    "omo-memory init",
+    "omo-memory doctor",
+    "omo-memory export",
+    "omo-memory purge --yes",
+    "omo-memory global scan --root <path>",
+    "omo-memory global migrate --root <path> --global-db <path>",
+    "omo-memory global list --global-db <path>",
+    "omo-memory session start",
+    "omo-memory event record",
+    "omo-memory recent",
+    "omo-memory recall --query <text>",
+    "omo-memory handoff write",
+  ]) {
+    if (!help.stdout.includes(text)) fail(`installed help missing ${text}`);
+  }
+  if (/ontology|graph tui|OpenTUI/i.test(help.stdout)) fail("installed help still lists removed ontology/graph surfaces");
+
   const tempRoot = mkdtempSync(join(tmpdir(), "omo-installed-e2e-"));
   try {
-    writeFixtureProject(tempRoot, "linaforge", [
+    const linaforge = writeFixtureProject(tempRoot, "linaforge", [
       ["decision", "Linaforge installed e2e global sqlite migration"],
-      ["qa_evidence", "Linaforge installed OpenTUI graph renders ontology"],
+      ["qa_evidence", "Linaforge installed e2e core ledger recall"],
     ]);
     writeFixtureProject(tempRoot, "lfg", [
       ["decision", "lfg installed e2e contributes cross-project memory"],
-      ["qa_evidence", "lfg installed MCP rejects malformed promotion"],
+      ["qa_evidence", "lfg installed MCP exposes only core ledger tools"],
     ]);
+    const recent = runJson(["recent", "--limit", "5"], { cwd: linaforge.projectDir, env: { OMO_MEMORY_DB: linaforge.dbPath } });
+    if (recent.events.length !== 2) fail(`installed recent mismatch: ${JSON.stringify(recent)}`);
+    const recall = runJson(["recall", "--query", "core ledger", "--limit", "5"], { cwd: linaforge.projectDir, env: { OMO_MEMORY_DB: linaforge.dbPath } });
+    if (recall.events.length !== 1) fail(`installed recall mismatch: ${JSON.stringify(recall)}`);
+    const exported = runJson(["export"], { cwd: linaforge.projectDir, env: { OMO_MEMORY_DB: linaforge.dbPath } });
+    if (exported.events.length !== 2 || exported.handoffs.length !== 1) fail(`installed export mismatch: ${JSON.stringify(exported)}`);
+
     const globalDbPath = join(tempRoot, "global.sqlite");
+    const scan = runJson(["global", "scan", "--root", tempRoot], { cwd: root });
+    if (scan.candidates.length !== 2) fail(`installed global scan weak result: ${JSON.stringify(scan)}`);
     const migrate = runJson(["global", "migrate", "--root", tempRoot, "--global-db", globalDbPath], { cwd: root });
-    if (migrate.after.projects < 2 || migrate.after.events < 4) fail(`installed global migrate weak result: ${JSON.stringify(migrate)}`);
-    const candidates = runJson(["ontology", "candidates"], { cwd: root, env: { OMO_MEMORY_DB: globalDbPath } });
-    if (candidates.concepts.length === 0) fail("installed ontology candidates produced no concepts");
-    runJson(["ontology", "score"], { cwd: root, env: { OMO_MEMORY_DB: globalDbPath } });
-    const promoted = runJson(["ontology", "promote", "--concept", "linaforge", "--summary", "Installed Linaforge durable memory"], {
-      cwd: root,
-      env: { OMO_MEMORY_DB: globalDbPath },
-    });
-    const recall = runJson(["ontology", "recall", "--query", "linaforge"], { cwd: root, env: { OMO_MEMORY_DB: globalDbPath } });
-    if (!recall.durableMemories.some((memory) => memory.id === promoted.durableMemory.id)) fail("installed ontology recall missed promoted memory");
-    runJson(["ontology", "demote", "--id", promoted.durableMemory.id], { cwd: root, env: { OMO_MEMORY_DB: globalDbPath } });
-    runJson(["ontology", "supersede", "--id", promoted.durableMemory.id, "--summary", "Installed Linaforge successor memory"], {
-      cwd: root,
-      env: { OMO_MEMORY_DB: globalDbPath },
-    });
-    await verifyInstalledMcp(tempRoot);
-    const graphCapture = await verifyInstalledGraph(globalDbPath);
+    if (migrate.after.projects < 2 || migrate.after.events < 4 || migrate.after.handoffs < 2)
+      fail(`installed global migrate weak result: ${JSON.stringify(migrate)}`);
+    const globalList = runJson(["global", "list", "--global-db", globalDbPath], { cwd: root });
+    if (globalList.counts.projects < 2 || globalList.counts.events < 4 || globalList.counts.handoffs < 2) {
+      fail(`installed global list weak result: ${JSON.stringify(globalList)}`);
+    }
+
+    const refusedPurge = runJsonFail(["purge"], { cwd: linaforge.projectDir, env: { OMO_MEMORY_DB: linaforge.dbPath } });
+    if (!/purge requires --yes/i.test(refusedPurge.error)) fail(`installed purge refusal mismatch: ${refusedPurge.error}`);
+    const purged = runJson(["purge", "--yes"], { cwd: linaforge.projectDir, env: { OMO_MEMORY_DB: linaforge.dbPath } });
+    if (purged.deleted.events !== 2 || purged.deleted.handoffs !== 1) fail(`installed purge mismatch: ${JSON.stringify(purged)}`);
+
+    const mcp = await verifyInstalledMcp(tempRoot);
     const evidence = {
       npmInstallGlobal: install.stdout.trim().split(/\r?\n/).slice(-3),
-      installedHelp: "graph command present",
+      installedHelp: "core ledger commands present; ontology/graph absent",
       globalDbPath,
       migratedProjects: migrate.after.projects,
       migratedEvents: migrate.after.events,
-      concepts: candidates.concepts.length,
-      promotedDurableId: promoted.durableMemory.id,
-      recallCount: recall.durableMemories.length,
-      mcp: "initialize/bootstrap/malformed-promotion checks passed",
-      graphCaptureIncludes: ["OMO Ontology Graph", "linaforge", "Retention:"],
-      graphCapturePreview: graphCapture.split(/\r?\n/).slice(0, 12),
-      cleanup: "temp root removed and tmux session exited",
+      migratedHandoffs: migrate.after.handoffs,
+      globalListCounts: globalList.counts,
+      cliCoreLedger: "session/event/handoff/recent/recall/export/purge checks passed",
+      removedCliSurfacesAbsentFromHelp: ["ontology commands", "graph tui"],
+      mcp: "initialize/tools/core-ledger/global/purge checks passed",
+      mcpToolCount: mcp.toolCount,
+      removedMcpSurfacesAbsentFromToolList: ["memory_ontology_*"],
+      cleanup: "temp root removed; no graph TUI launched",
     };
     mkdirSync(dirname(evidencePath), { recursive: true });
     writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`);
-    console.log("VERIFY PASS: installed package second-brain lifecycle");
+    console.log("VERIFY PASS: installed package core ledger lifecycle");
     console.log(JSON.stringify(evidence, null, 2));
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
